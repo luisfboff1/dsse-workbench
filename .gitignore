@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.venv/
+env/
+venv/
+
+# Build artifacts
+dist/
+build/
+release/
+packaging/dist/
+packaging/build/
+packaging/release/
+app/frontend/dist/
+app/electron/dist/
+
+# Python cache & runtime data
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.mypy_cache/
+cenarios_app/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

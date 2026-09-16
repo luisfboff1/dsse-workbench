@@ -1,0 +1,29 @@
+# Dependencias do backend EMPACOTADO -- deliberadamente menor que o
+# requirements.txt da raiz.
+#
+# O requirements.txt da raiz e do lado de pesquisa (jupyterlab, matplotlib,
+# folium, simbench, pyzotero...). Instalar aquilo no ambiente de build faria o
+# PyInstaller varrer centenas de MB que nenhuma rota do app chama. Aqui fica so
+# o que o `dsse-backend.exe` precisa em runtime.
+#
+# Se uma rota nova passar a importar algo, adicione aqui -- senao o app instalado
+# quebra com ModuleNotFoundError enquanto o dev continua funcionando.
+
+fastapi
+uvicorn
+
+# Motor de rede e fluxo de potencia
+pandapower
+
+# OpenDSS NAO entra: nenhuma rota do app o utiliza (ver dsse_backend.spec).
+# Se passar a usar, o spec precisa recolher `dss` e `dss_python_backend`
+# tambem -- as DLLs nativas moram la, nao em `opendssdirect`.
+
+# Numerico (tambem dependencias do pandapower, fixadas aqui de proposito)
+numpy
+scipy
+pandas
+networkx
+
+# Empacotador
+pyinstaller

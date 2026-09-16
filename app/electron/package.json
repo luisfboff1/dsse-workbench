@@ -1,0 +1,77 @@
+{
+  "name": "dsse-workbench",
+  "productName": "DSSE Workbench",
+  "version": "0.6.2",
+  "description": "DSSE Simulation Workbench — power flow, state estimation e bad data",
+  "author": "Luis Fernando Boff",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "publish": "electron-builder --publish always"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "build": {
+    "appId": "br.ufrgs.boff.dsse-workbench",
+    "productName": "DSSE Workbench",
+    "directories": {
+      "output": "../../packaging/release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../../packaging/dist/dsse-backend",
+        "to": "backend"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "luisfboff1",
+        "repo": "dsse-workbench",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

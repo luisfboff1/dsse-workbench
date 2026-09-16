@@ -1,0 +1,132 @@
+@import 'tailwindcss';
+@import "tw-animate-css";
+@import "katex/dist/katex.min.css";
+
+/* katex.min.css hides the accessibility MathML tree via a clip-rect trick;
+   under Tailwind v4's cascade layers that rule loses, so the raw MathML
+   text renders visibly right below the pretty equation. display:none is a
+   simpler, layer-order-proof way to hide it. */
+.katex .katex-mathml {
+  display: none;
+}
+
+@layer base {
+  * {
+    @apply border-border
+  }
+
+  /* Tailwind's text-* and spacing-* scales are both rem-based off this, so
+     bumping it scales type AND padding/gaps together (not just font size).
+     Was raised to 18px flat on 2026-07-02, then made responsive (16/17/18px)
+     on 2026-07-19, but the app still read as oversized/cramped at every size
+     — dropped to a flat 14px (2026-07-19) to match the density of the other
+     dashboard-style app in this workspace (financeiro/app/globals.css).
+     Recharts tick/tooltip font sizes are raw px props, not CSS, so they
+     don't scale with this — a separate pass if those also need adjusting. */
+  html {
+    font-size: 14px;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, .mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+:root {
+  --background: oklch(0.98 0.005 250);
+  --foreground: oklch(0.18 0.02 250);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.02 250);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 250);
+
+  --primary: oklch(0.25 0.05 250);
+  --primary-foreground: oklch(0.98 0 0);
+
+  --secondary: oklch(0.45 0.02 250);
+  --secondary-foreground: oklch(0.98 0 0);
+
+  --muted: oklch(0.95 0.01 250);
+  --muted-foreground: oklch(0.50 0.02 250);
+
+  --accent: oklch(0.60 0.20 240);
+  --accent-foreground: oklch(0.98 0 0);
+
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --border: oklch(0.88 0.01 250);
+  --input: oklch(0.88 0.01 250);
+  --ring: oklch(0.60 0.20 240);
+
+  --radius: 0.5rem;
+
+  /* Power flow method identity colors — one place to retune the AC/DC/LinDist palette. */
+  --method-ac: oklch(0.60 0.145 163);
+  --method-dc: oklch(0.55 0.22 263);
+  --method-ldf: oklch(0.54 0.20 305);
+
+  /* Generic status colors, independent of method identity. */
+  --status-good: oklch(0.60 0.145 152);
+  --status-warn: oklch(0.67 0.18 58);
+  --status-info: oklch(0.55 0.20 250);
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-method-ac: var(--method-ac);
+  --color-method-dc: var(--method-dc);
+  --color-method-ldf: var(--method-ldf);
+
+  --color-status-good: var(--status-good);
+  --color-status-warn: var(--status-warn);
+  --color-status-info: var(--status-info);
+
+  --breakpoint-xs: 475px;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) * 1.5);
+  --radius-xl: calc(var(--radius) * 2);
+  --radius-2xl: calc(var(--radius) * 3);
+  --radius-full: 9999px;
+}
+
+.shake {
+  animation: shake 150ms ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
