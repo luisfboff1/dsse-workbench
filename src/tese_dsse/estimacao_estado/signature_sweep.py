@@ -1529,24 +1529,55 @@ def classify_by_glrt(
     *,
     eps_lib: float = 1.0,
     tau_topology: float = 1.0,
-    tau_measurement: float = 6.0,
 ) -> tuple[str, int | None, dict[str, Any]]:
     """Classifica medida x parametro x topologia por seleção de modelo entre
     subespacos, em UMA execucao do estimador.
 
     Substituto de `ac_bad_data.classify_attack_signature` (a regra da p. 213).
-    Medido nos casos detectados -- acuracia de tipo / acerto de linha:
-    case9 **0,848 / 0,905** contra 0,298/0,293 do baseline; case14
-    **0,769 / 0,835** contra 0,317/0,230. Topologia sai 36/36 e 59/59.
 
-    - `tau_topology`: |dp_hat| acima disto e abertura de ramo, nao erro de
-      parametro. Interpretacao fisica direta: `dp_hat = -1` e "o parametro foi
-      a zero". Default 1,0 -- o otimo medido fica em 1,0 (case9) e 1,5
-      (case14); a separacao e larga, entao o valor exato importa pouco.
-    - `tau_measurement`: |r_N| do pico isolado acima disto, com `dp_hat`
-      pequeno, indica erro de MEDIDA.
+    **Nivel 0 -- linha vs. medida isolada, pela MESMA metrica (per-dof).**
+    Ate 16/09/2026 a hipotese de medida isolada era um corte de pico
+    (`|r_N| > tau_measurement`) desconectado do ranking de linhas -- e por
+    isso um ataque de topologia real podia "perder" para uma unica medida
+    grande mesmo quando a linha explicava a maior parte do residuo (achado
+    de `docs/governanca/decisoes_tecnicas.md`, 16/09/2026: linha explicando
+    58,7% de `J` contra 12,7% da melhor medida isolada, e mesmo assim o
+    veredito saia `"measurement"`). Corrigido: com `S = e_i` o GLRT reduz
+    EXATAMENTE a `r_N,i^2` (ver `formulacao_glrt_subespacos.md` §3 -- o
+    teste classico e o membro `k=1` da mesma familia), entao a medida de
+    maior `|r_N|` entra na MESMA competicao `Λ = ΔJ/k` que as linhas, em vez
+    de um limiar a parte. Quem tiver o maior `Λ` vence o nivel 0.
 
-    Retorna `(tipo, line_id_ou_None, diagnostico)`.
+    **Nivel 1 -- qual linha**, so quando uma linha venceu o nivel 0:
+    `argmax_ℓ (J₀−J_ℓ)/k_ℓ` (geometria).
+
+    **Nivel 2 -- parametro ou topologia**, so quando uma linha venceu, e o
+    criterio depende de QUE TIPO de coluna essa linha tem em `sens_lib`:
+
+    - Linha que comecava **fora de servico** (tie-switch, coluna `(m x 1)`
+      construida por `parameter_sensitivity_library` como a diferenca exata
+      `h(fechado)-h(ref)`): a UNICA hipotese coerente e "o ramo fechou" --
+      nao existe "erro de parametro" num ramo que nao esta no modelo. O
+      veredito e `topology` direto, sem teste de magnitude. Testar magnitude
+      aqui seria comparar coisas de escala diferente: essa coluna ja e o
+      efeito FISICO COMPLETO do fechamento (nao dividida por `eps`), entao um
+      fechamento real da `dp_hat proximo de 1,0` -- exatamente em cima de
+      `tau_topology`, ao contrario do caso de abertura abaixo, que fica bem
+      acima. Medido em 16/09/2026 (`case33bw`, fechar SW-32): `dp_hat` saiu
+      `0,981` e `0,985` em duas rodadas -- por acaso de ruido, cai dos dois
+      lados de `1,0`.
+    - Linha que comecava **em servico** (coluna `(m x 3)`, derivada de
+      `r/x/c` por `+-eps`, `eps=0,05`): magnitude de `dp_hat` decide --
+      `tau_topology`: acima disto e abertura de ramo (o parametro foi
+      efetivamente a zero, e a extrapolacao linear "estoura" para 3,5-8,1,
+      bem acima de 1,0); abaixo e erro de parametro genuino (`~0,2`).
+      Default `tau_topology=1,0`.
+
+    Retorna `(tipo, line_id_ou_None, diagnostico)`. `diagnostico` sempre traz
+    `line`/`mag_dp` (a melhor linha, mesmo quando o veredito e `measurement`)
+    e `measurement_idx`/`measurement_score` (a medida isolada candidata,
+    mesmo quando o veredito e `topology`/`parameter`) -- para nao perder a
+    informacao do lado que nao venceu, como acontecia antes.
     """
 
     from .bad_data import hat_matrix
@@ -1558,13 +1589,25 @@ def classify_by_glrt(
         if k and dj / k > melhor_score:
             melhor_l, melhor_score, melhor_dp, melhor_k = int(line_id), dj / k, dp, k
 
+    r_N_arr = np.asarray(r_N, dtype=float)
+    idx_peak = int(np.argmax(np.abs(r_N_arr)))
+    score_medida = float(r_N_arr[idx_peak] ** 2)  # k=1, entao Λ = ΔJ/k = r_N,i^2
+
     mag = float(np.max(np.abs(melhor_dp))) if melhor_dp is not None else 0.0
-    rn_peak = float(np.max(np.abs(np.asarray(r_N))))
+    linha_comecava_fora_de_servico = (
+        melhor_l is not None and sens_lib[melhor_l].shape[1] == 1
+    )
     diag = {"line": melhor_l, "score": melhor_score, "dp_hat": melhor_dp,
-            "mag_dp": mag, "k": melhor_k, "rn_peak": rn_peak}
+            "mag_dp": mag, "k": melhor_k,
+            "measurement_idx": idx_peak, "measurement_score": score_medida,
+            "line_was_out_of_service": linha_comecava_fora_de_servico}
+
+    if score_medida >= melhor_score:
+        return "measurement", None, diag
+
+    if linha_comecava_fora_de_servico:
+        return "topology", melhor_l, diag
 
     if mag > tau_topology:
         return "topology", melhor_l, diag
-    if rn_peak > tau_measurement:
-        return "measurement", None, diag
     return "parameter", melhor_l, diag

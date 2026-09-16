@@ -16,6 +16,21 @@
 [🌐 Online Manual](https://luisfboff1.github.io/dsse-workbench/) •
 [📦 All Releases](https://github.com/luisfboff1/dsse-workbench/releases)
 
+<br/><br/>
+
+<a href="https://www.univ-grenoble-alpes.fr/" target="_blank">
+  <img src="docs/assets/institucional/logo_uga.png" height="34" alt="Université Grenoble Alpes" />
+</a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<a href="https://www.cnrs.fr/" target="_blank">
+  <img src="docs/assets/institucional/logo_cnrs.png" height="34" alt="CNRS" />
+</a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<a href="https://g2elab.grenoble-inp.fr/" target="_blank">
+  <img src="docs/assets/institucional/logo_g2elab.png" height="34" alt="G2Elab" />
+</a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<a href="https://ense3.grenoble-inp.fr/" target="_blank">
+  <img src="docs/assets/institucional/logo_grenoble_inp.png" height="34" alt="Grenoble INP - Ense3" />
+</a>
+
 </div>
 
 ---
@@ -127,6 +142,20 @@ DSSE Workbench features a built-in auto-updater. When a new version is released:
 
 ---
 
+## 👥 Research Team & Collaboration
+
+- **Lead Researcher & Developer:** **Luis Fernando Boff** ([GitHub](https://github.com/luisfboff1)) — PhD Candidate, Université Grenoble Alpes / CNRS G2Elab.
+- **Academic Advisor & Scientific Collaborator:** **Prof. Arturo S. Bretas** ([G2Elab](https://g2elab.grenoble-inp.fr/)) — Université Grenoble Alpes / CNRS G2Elab.
+
+### 🏛️ Affiliated Institutions & Laboratories
+
+- **G2Elab** — Laboratoire de Génie Électrique de Grenoble
+- **CNRS** — Centre National de la Recherche Scientifique
+- **UGA** — Université Grenoble Alpes
+- **Grenoble INP - Ense3** — École nationale supérieure de l'énergie, l'eau et l'environnement
+
+---
+
 ## 📜 Citation & Research
 
 If you use DSSE Simulation Workbench in academic work or publications, please cite:
@@ -136,7 +165,8 @@ If you use DSSE Simulation Workbench in academic work or publications, please ci
   author = {Luis Fernando Boff},
   title  = {State Estimation in Distribution Systems with Multi-Agent Artificial Intelligence},
   school = {Université Grenoble Alpes / CNRS G2Elab},
-  year   = {2026}
+  year   = {2026},
+  note   = {Supervised by Prof. Arturo S. Bretas}
 }
 ```
 
