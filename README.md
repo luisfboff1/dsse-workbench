@@ -12,6 +12,8 @@
 
 [📥 Download Installer (.exe)](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-Setup-0.6.2.exe) •
 [🚀 Download Portable (.exe)](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-0.6.2.exe) •
+[📖 User Manual (PDF)](docs/manual/manual_app.pdf) •
+[🌐 Online Manual](https://luisfboff1.github.io/dsse-workbench/) •
 [📦 All Releases](https://github.com/luisfboff1/dsse-workbench/releases)
 
 </div>
@@ -55,6 +57,16 @@ The workbench integrates power flow solvers, distribution system state estimatio
 
 ### Option 2: Portable Executable
 - Download **[DSSE-Workbench-0.6.2.exe](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-0.6.2.exe)** and double-click to run directly without installation.
+
+---
+
+## 📖 User Manual & Documentation
+
+A complete, illustrated user manual covering all 8 functional modules of DSSE Workbench (network topology single-line diagram, power flow solvers, WLS state estimation, bad data identification, benchmark comparison, cyber-physical pipeline, SCADA console, and multi-agent systems):
+
+- **🌐 Interactive Online Manual:** [https://luisfboff1.github.io/dsse-workbench/](https://luisfboff1.github.io/dsse-workbench/)
+- **📄 Printable Document (PDF):** [Download User Manual (PDF)](docs/manual/manual_app.pdf)
+- **Offline HTML in Repo:** Available directly under [`docs/manual/manual_app.html`](docs/manual/manual_app.html).
 
 ---
 

@@ -1,0 +1,1432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSSE Workbench — User Manual</title>
+<style>
+  /* Light theme only: the screenshots are taken from the application in its
+     light theme, and a dark page around light figures reads badly both on
+     screen and in print. */
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1b232e;
+    --ink-soft: #55617a;
+    --line: #dde2ea;
+    --accent: #0b5cab;
+    --accent-soft: #eaf1fa;
+    --pin: #cf2222;
+    --pin-soft: rgba(207, 34, 34, 0.10);
+    --ok: #14804a;
+    --warn: #9a5b06;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.62 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  p, li, dd, figcaption, td {
+    text-align: justify;
+    text-justify: inter-word;
+    hyphens: auto;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 268px minmax(0, 1fr);
+    gap: 34px;
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 28px 80px;
+  }
+
+  /* ── Table of contents (screen) ──────────────────────────────────────── */
+  nav.toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 26px 0 40px;
+  }
+  nav.toc .brand { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+  nav.toc .brand span { color: var(--accent); }
+  nav.toc .stamp { font-size: 11.5px; color: var(--ink-soft); margin: 2px 0 16px; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; }
+  nav.toc a {
+    display: block;
+    padding: 3.5px 10px;
+    border-left: 2px solid transparent;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 13.5px;
+    text-align: left;
+    hyphens: none;
+  }
+  nav.toc a:hover { color: var(--ink); background: #eceff4; }
+  nav.toc a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+  nav.toc .part {
+    margin: 15px 0 4px;
+    padding-left: 10px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #8a94a6;
+  }
+
+  /* ── Body ────────────────────────────────────────────────────────────── */
+  main { padding: 30px 0 0; min-width: 0; }
+
+  header.doc {
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: 18px;
+    margin-bottom: 26px;
+  }
+  header.doc .kicker {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  header.doc h1 { margin: 6px 0 8px; font-size: 30px; letter-spacing: -0.02em; }
+  header.doc .sub { margin: 0; color: var(--ink-soft); max-width: 80ch; }
+  header.doc dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 14px;
+    margin: 14px 0 0;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  header.doc dt { font-weight: 600; color: var(--ink); }
+  header.doc dd { margin: 0; }
+
+  section { scroll-margin-top: 16px; margin-bottom: 30px; }
+  h2 {
+    font-size: 20px;
+    letter-spacing: -0.01em;
+    margin: 34px 0 10px;
+    padding-bottom: 7px;
+    border-bottom: 2px solid var(--line);
+  }
+  h3 { font-size: 15.5px; margin: 22px 0 6px; }
+  h2 .num, h3 .num {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    margin-right: 9px;
+  }
+  p { margin: 0 0 11px; }
+  a { color: var(--accent); }
+
+  .purpose { color: var(--ink-soft); }
+
+  /* Numbered procedure; the numbers match the ones drawn on the figure. */
+  ol.steps { counter-reset: step; list-style: none; margin: 4px 0 14px; padding: 0; }
+  ol.steps > li {
+    counter-increment: step;
+    position: relative;
+    padding: 2px 0 2px 33px;
+    margin-bottom: 6px;
+    break-inside: avoid;
+  }
+  ol.steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 1px;
+    width: 21px;
+    height: 21px;
+    border-radius: 50%;
+    background: var(--pin);
+    color: #fff;
+    font: 700 12px/21px var(--mono);
+    text-align: center;
+  }
+  ol.steps.plain > li::before { background: var(--accent); }
+
+  ul.plain { margin: 4px 0 14px; padding: 0; list-style: none; }
+  /* Hanging indent rather than flex: these items mix running text with inline
+     <b>/<code>, and flex would break the sentence into columns. */
+  ul.plain > li {
+    padding-left: 1.35em;
+    text-indent: -1.35em;
+    margin-bottom: 5px;
+    break-inside: avoid;
+  }
+  ul.plain > li::before { content: "\25B8\00a0\00a0"; color: var(--accent); }
+
+  code, kbd {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: #eef1f5;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.5px 4px;
+  }
+  kbd { box-shadow: 0 1px 0 #c6ccd6; }
+
+  pre {
+    background: #11212f;
+    color: #e7eef5;
+    border-radius: 7px;
+    padding: 11px 14px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.5;
+    break-inside: avoid;
+  }
+  pre code { background: none; border: 0; color: inherit; padding: 0; }
+
+  .note {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    background: var(--card);
+    border-radius: 7px;
+    padding: 11px 15px;
+    margin: 13px 0;
+    break-inside: avoid;
+  }
+  .note.caution { border-left-color: var(--warn); }
+  .note.good { border-left-color: var(--ok); }
+  .note p:last-child { margin-bottom: 0; }
+  .note .tag {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 3px;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0 16px;
+    font-size: 13.5px;
+    break-inside: auto;
+  }
+  th, td { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
+  th { background: #eef1f5; text-align: left; font-size: 12.5px; }
+  tr { break-inside: avoid; }
+
+  /* ── Figures ─────────────────────────────────────────────────────────── */
+  /* Every figure is a crop of the panel it documents, so it fits a printed
+     page without scrolling or scaling. */
+  figure.shot {
+    margin: 14px 0 18px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 9px;
+    break-inside: avoid;
+  }
+  /* The frame is capped at the panel's REAL on-screen width, written by the
+     capture script into coords.js and applied by the script at the bottom of
+     this file. Without that cap the image fills the text column whatever its
+     size, which upscales every small or tall crop: a 247x137 panel stretched
+     to an 840px column is a 3.4x blow-up, and a 332x697 one becomes 1760px
+     tall. Print never showed it because the print rules already constrain by
+     height. Same principle as the numbered marks: the number that decides how
+     big a figure is comes from measuring the app, never from a value typed in
+     here. */
+  figure.shot .frame {
+    position: relative;
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    line-height: 0;
+    border-radius: 5px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+  }
+  figure.shot img { width: 100%; display: block; }
+
+  /* A chapter opener: the whole tab, so the crops that follow have somewhere
+     to be located. It carries no numbers on purpose — numbering here would
+     compete with the crops, which is where instruction belongs — and it gets
+     more height than a crop because it is a page, not a panel. */
+  figure.shot.overview { background: var(--bg); }
+  figure.shot.overview .frame { border-color: var(--ink-soft); }
+
+  .hl {
+    position: absolute;
+    border: 2px solid var(--pin);
+    background: var(--pin-soft);
+    border-radius: 3px;
+    pointer-events: none;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7);
+  }
+  .hl b {
+    position: absolute;
+    left: -10px;
+    top: -10px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--pin);
+    color: #fff;
+    font: 700 11.5px/20px var(--mono);
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  body.no-pins .hl { display: none; }
+
+  figcaption {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 7px;
+    text-align: left;
+  }
+  figcaption .fignum { font-weight: 700; color: var(--ink); }
+  figcaption .miss { color: var(--warn); }
+
+  #pintoggle {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 40;
+    font: 600 11.5px/1 var(--mono);
+    color: var(--accent);
+    background: #fff;
+    border: 1px solid #c9dcf3;
+    border-radius: 5px;
+    padding: 7px 10px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  }
+
+  footer.doc {
+    margin-top: 36px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+
+  /* Printed table of contents; replaced by the sidebar on screen. */
+  .toc-print { display: none; }
+
+  @media (max-width: 1000px) {
+    .layout { grid-template-columns: 1fr; padding: 0 16px 60px; }
+    nav.toc { position: static; max-height: none; padding-bottom: 8px; }
+  }
+
+  /* ── Print / PDF ─────────────────────────────────────────────────────── */
+  @page { size: A4; margin: 17mm 15mm 15mm; }
+
+  @media print {
+    :root { --bg: #fff; }
+    body {
+      background: #fff;
+      font-size: 10.5pt;
+      line-height: 1.45;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .layout { display: block; max-width: none; padding: 0; }
+    main { padding: 0; }
+    nav.toc, #pintoggle { display: none !important; }
+
+    .toc-print { display: block; break-after: page; }
+    .toc-print h2 { margin-top: 0; }
+    .toc-print ol { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 26px; }
+    .toc-print li { margin-bottom: 3px; font-size: 10pt; break-inside: avoid; }
+    .toc-print .part {
+      margin: 10px 0 4px;
+      font-size: 8.5pt;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+      break-after: avoid;
+    }
+    .toc-print a { color: var(--ink); text-decoration: none; }
+
+    /* One chapter per page keeps figures next to the steps that cite them. */
+    section.chapter { break-before: page; }
+    h2, h3 { break-after: avoid; }
+    figure.shot, .note, pre, ol.steps > li { break-inside: avoid; }
+    figure.shot { background: #fff; }
+    /* A cropped panel never needs the full text width on paper; narrow
+       crops are centred instead of left-aligned against empty space. */
+    figure.shot { text-align: center; }
+    figure.shot img { max-height: 92mm; width: auto; max-width: 100%; }
+    /* An opener is a whole page: at the crop's height cap it would print as a
+       thumbnail nobody can read. */
+    figure.shot.overview img { max-height: 155mm; }
+    figure.shot .frame { display: inline-block; }
+    figcaption { text-align: left; }
+    a { color: var(--ink); text-decoration: none; }
+    footer.doc { break-before: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+<nav class="toc">
+  <div class="brand">DSSE Workbench <span>User Manual</span></div>
+  <div class="stamp" id="stamp">screenshots: loading…</div>
+  <ol id="toclist">
+    <li class="part">Getting started</li>
+    <li><a href="#about">1. About this manual</a></li>
+    <li><a href="#overview">2. What the application does</a></li>
+    <li><a href="#install">3. Installation and startup</a></li>
+    <li><a href="#window">4. The application window</a></li>
+    <li class="part">Working with the application</li>
+    <li><a href="#topology">5. Defining the network</a></li>
+    <li><a href="#powerflow">6. Running a power flow</a></li>
+    <li><a href="#estimation">7. Estimating the state</a></li>
+    <li><a href="#baddata">8. Bad data analysis</a></li>
+    <li><a href="#workbench">9. Running several methods at once</a></li>
+    <li><a href="#pipeline">10. The measurement chain</a></li>
+    <li><a href="#console">11. The operator view</a></li>
+    <li><a href="#agents">12. Multi-agent estimation</a></li>
+    <li><a href="#help">13. Built-in reference</a></li>
+    <li class="part">Reference</li>
+    <li><a href="#conventions">14. Conventions and shortcuts</a></li>
+    <li><a href="#troubleshooting">15. Troubleshooting</a></li>
+    <li><a href="#maintenance">16. Maintaining this manual</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="doc">
+  <div class="kicker">User Manual</div>
+  <h1>DSSE Workbench</h1>
+  <p class="sub">Distribution System State Estimation workbench: network
+  modelling, power flow, weighted least squares state estimation, bad data
+  analysis, measurement chain simulation and multi-agent estimation, in a
+  single desktop application.</p>
+  <dl>
+    <dt>Audience</dt><dd>Engineers and researchers using the application; no prior familiarity with the source code is assumed.</dd>
+    <dt>Screenshots</dt><dd id="stamp2">captured from the running application</dd>
+    <dt>Institution</dt><dd>Université Grenoble Alpes · CNRS · G2Elab</dd>
+  </dl>
+</header>
+
+<!-- Printed only: the sidebar is not available on paper. -->
+<section class="toc-print">
+  <h2>Contents</h2>
+  <ol id="tocprint"></ol>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="about" class="chapter">
+  <h2><span class="num">1</span>About this manual</h2>
+
+  <p>This manual describes how to operate the DSSE Workbench. It is organised
+  in the order in which the application is normally used: the network is
+  defined first, a power flow establishes the reference state, the estimator
+  is run on measurements derived from it, and the remaining chapters cover
+  bad data analysis, the measurement chain, the operator view and the
+  multi-agent framework.</p>
+
+  <p>Each chapter states the purpose of the corresponding tab, shows the
+  relevant part of the interface, and lists the controls in the order in which
+  they are used. The numbers in each procedure correspond to the numbered
+  marks on the figure beside it.</p>
+
+  <p>Screenshots and marks are produced automatically from the running
+  application, so they correspond to the interface as built, not to a
+  redrawing of it. Chapter&nbsp;16 describes how they are regenerated.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="overview" class="chapter">
+  <h2><span class="num">2</span>What the application does</h2>
+
+  <p>The workbench reproduces the complete path between an electrical network
+  and an operational decision: the field measurement, the RTU that maps it to
+  a telemetry point, the communication channel that delays or drops it, the
+  SCADA real-time database that stamps it with quality and age, the topology
+  processor that decides whether a breaker is open or closed, the state
+  estimator that solves the weighted least squares problem on the resulting
+  measurement vector, and the optimal power flow computed on the estimated
+  state.</p>
+
+  <p>The purpose is not only to obtain a state estimate, but to make visible
+  what each layer did to the data before the result was produced. Every stage
+  can therefore be perturbed, with measurement noise, gross errors, line
+  parameter errors, falsified breaker status or a compromised RTU, and the
+  consequence observed downstream.</p>
+
+  <p>The application runs entirely on the local machine. The backend is a
+  Python process (FastAPI, pandapower, OpenDSS) and the interface is served
+  locally by it. No measurement or network data leaves the computer; the only
+  network access is the check for application updates.</p>
+
+  <h3><span class="num">2.1</span>Tabs and their roles</h3>
+  <table>
+    <tr><th style="width:22%">Tab</th><th>Role</th></tr>
+    <tr><td><b>Topology</b></td><td>Defines the network: test system, buses, lines, meters and switch status. All other tabs operate on it.</td></tr>
+    <tr><td><b>Power Flow</b></td><td>Solves the network without measurements. Provides the reference state.</td></tr>
+    <tr><td><b>State Est.</b></td><td>Runs the estimator alone, on measurements generated from the reference state.</td></tr>
+    <tr><td><b>Bad Data</b></td><td>Detection, identification and correction of gross errors and line parameter errors.</td></tr>
+    <tr><td><b>Workbench</b></td><td>Runs power flow, estimation and bad data detection in sequence and compares them.</td></tr>
+    <tr><td><b>Pipeline</b></td><td>The full measurement chain with every layer exposed, and fault injection per layer.</td></tr>
+    <tr><td><b>Console</b></td><td>The same chain presented as a control room display.</td></tr>
+    <tr><td><b>Agents</b></td><td>Distributed estimation over network partitions, with cross-layer agents.</td></tr>
+    <tr><td><b>Help</b></td><td>Reference documentation: algorithms, equations, sensor classes, glossary, case studies.</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="install" class="chapter">
+  <h2><span class="num">3</span>Installation and startup</h2>
+
+  <h3><span class="num">3.1</span>Installed application (Windows)</h3>
+  <ol class="steps plain">
+    <li>Download the installer from the most recent release and run it. Python
+    and Node.js are not required: the backend is bundled inside the
+    application.</li>
+    <li>Start <b>DSSE Workbench</b> from the Start menu. The application starts
+    its own backend on a local port and loads the interface.</li>
+    <li>When a new version is available, an update banner appears at the top of
+    the window. Accepting it downloads and installs the update.</li>
+  </ol>
+
+  <h3><span class="num">3.2</span>Development environment</h3>
+  <p>On a machine with the repository cloned, the virtual environment created
+  and the frontend dependencies installed:</p>
+  <pre><code>.\scripts\run_app.ps1        (or scripts\run_app.bat)</code></pre>
+  <p>The script starts the backend on port 8000 and the frontend development
+  server on port 5173, and opens a browser on the interface. Closing both
+  terminals stops the application.</p>
+
+  <div class="note caution">
+    <span class="tag">Note</span>
+    <p>Changes to the application source do not reach installed copies on their
+    own. An installed application only sees a change after a release is
+    published, which requires the version number in the Electron package
+    manifest to be increased and a matching tag pushed. Committing alone
+    publishes nothing.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="window" class="chapter">
+  <h2><span class="num">4</span>The application window</h2>
+
+  <p class="purpose">The header is the only part of the window that does not
+  change between tabs.</p>
+
+  <figure class="shot" data-fig="ui_header"
+          data-pins="header.tabs,header.search,header.topology">
+    <div class="frame"><img src="../assets/capturas_app/manual/ui_header.png" alt="Application header"></div>
+    <figcaption><span class="fignum">Figure 4.1</span> — Application header.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Tab bar.</b> Nine tabs in a fixed order. The active tab is
+    highlighted. Switching tabs does not discard results already computed in
+    the previous one.</li>
+    <li><b>Search docs</b> (<kbd>Ctrl</kbd>+<kbd>K</kbd>). Searches the
+    built-in reference from any tab. Selecting a result opens the
+    corresponding topic in the Help tab.</li>
+    <li><b>Active network.</b> Shows the network currently loaded. It applies
+    to every tab, is selected in the Topology tab, and is retained between
+    sessions.</li>
+  </ol>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="topology" class="chapter">
+  <h2><span class="num">5</span>Defining the network</h2>
+  <p class="purpose">Tab: <b>Topology</b>. Everything defined here (network,
+  bus and line data, meters, switch status) is used by every other tab, and is
+  retained when the application is closed.</p>
+
+  <figure class="shot overview" data-fig="overview_topology" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_topology.png"
+         alt="The Topology tab in full"></div>
+    <figcaption><span class="fignum">Figure 5.0</span> — The
+    <b>Topology</b> tab in full. Network selection, diagram and the data tables, in one screen. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <h3><span class="num">5.1</span>Selecting a test system</h3>
+
+  <figure class="shot" data-fig="topology_source"
+          data-pins="topology.case,topology.pandapower">
+    <div class="frame"><img src="../assets/capturas_app/manual/topology_source.png" alt="Network selection"></div>
+    <figcaption><span class="fignum">Figure 5.1</span> — Network selection.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Built-in systems.</b> Includes the Stagg and El-Abiad 5-bus system
+    (the default), the IEEE 14-bus system and the IEEE 39-bus New England
+    system. The 5-bus system is small enough for results to be verified by
+    hand and is the recommended starting point.</li>
+    <li><b>pandapower cases</b>, grouped by voltage class: distribution
+    (medium voltage), transmission and low voltage. These are built by the
+    backend when selected, so large cases take a few seconds to load.</li>
+  </ol>
+
+  <h3><span class="num">5.2</span>The network diagram</h3>
+
+  <figure class="shot" data-fig="topology_diagram"
+          data-pins="topology.spatial,topology.tree,topology.fit,topology.meters,topology.switches">
+    <div class="frame"><img src="../assets/capturas_app/manual/topology_diagram.png" alt="Network diagram"></div>
+    <figcaption><span class="fignum">Figure 5.2</span> — Network diagram and its controls.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Spatial</b> view: buses at their coordinates, as in a single-line
+    diagram. Nodes can be dragged to improve readability.</li>
+    <li><b>Tree</b> view: the same network drawn as a radial feeder, from the
+    source downwards. Useful on distribution networks.</li>
+    <li><b>Fit</b> re-frames the diagram without discarding the current
+    layout.</li>
+    <li><b>Meters</b> opens the measurement assignment panel (section 5.3).</li>
+    <li><b>Switches</b> opens the switch panel and reports the number of closed
+    and open switches (section 5.4).</li>
+  </ol>
+
+  <p>The diagram follows the usual convention for feeder figures: buses are
+  nodes, branches are edges, voltage is mapped to node colour and loading to
+  edge width. Clicking a bus assigns a meter to that bus; clicking a line
+  assigns a branch-flow meter.</p>
+
+  <h3><span class="num">5.3</span>Assigning meters</h3>
+
+  <figure class="shot" data-fig="topology_meters_panel"
+          data-pins="topology.apply_all,topology.meter_class,topology.meter_list">
+    <div class="frame"><img src="../assets/capturas_app/manual/topology_meters_panel.png" alt="Meters panel"></div>
+    <figcaption><span class="fignum">Figure 5.3</span> — Measurement assignment panel.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Apply to all.</b> Assigns one measurement class to a whole group at
+    once, rather than bus by bus.</li>
+    <li><b>Measurement class and target.</b> The class determines the accuracy
+    used by the estimator; the target restricts the assignment to buses, to
+    lines, or to both.</li>
+    <li><b>Individual assignment.</b> Each bus and each line can be given, or
+    denied, a meter individually. A dash indicates an unmeasured element.</li>
+  </ol>
+
+  <div class="note">
+    <span class="tag">Why this matters</span>
+    <p>The measurement set determines whether the network is observable and
+    which measurements are critical. Removing a single meter can make a
+    measurement critical, meaning its error becomes undetectable. The
+    <i>Critical Measurements &amp; Observability</i> topic in the Help tab
+    describes the criterion.</p>
+  </div>
+
+  <h3><span class="num">5.4</span>Switch status</h3>
+
+  <figure class="shot" data-fig="topology_switches_panel" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/topology_switches_panel.png" alt="Switches panel"></div>
+    <figcaption><span class="fignum">Figure 5.4</span> — Switch panel; switches can also be operated directly on the diagram.</figcaption>
+  </figure>
+
+  <p>Switches can be opened and closed from this panel or from the symbols on
+  the diagram. Reconfiguring the network changes which buses are energised and
+  therefore changes every subsequent result.</p>
+
+  <p>In the Pipeline and Console tabs, switch status is not a boolean but a
+  double-bit value, following the DNP3 and IEC 61850 convention: 0
+  intermediate, 1 open, 2 closed, 3 indeterminate. Codes 1 and 2 are
+  conclusive readings; 0 and 3 are not. The distinction that matters
+  operationally is conclusive against inconclusive, not open against
+  closed.</p>
+
+  <h3><span class="num">5.5</span>Bus and line data</h3>
+
+  <figure class="shot" data-fig="topology_buses"
+          data-pins="topology.bus_table,topology.addbus">
+    <div class="frame"><img src="../assets/capturas_app/manual/topology_buses.png" alt="Bus data table"></div>
+    <figcaption><span class="fignum">Figure 5.5</span> — Bus data.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Bus table.</b> Voltage, angle, generation and load per bus. Greyed
+    fields are outputs, not inputs: they are only known after a power flow or
+    an estimation and cannot be edited. A PQ bus never takes a voltage
+    setpoint, a PV bus never takes an angle, and reactive generation is always
+    the quantity left free.</li>
+    <li><b>Add Bus</b> appends a bus to the network. New buses must be
+    connected by a line before the network can be solved.</li>
+  </ol>
+
+  <figure class="shot" data-fig="topology_lines"
+          data-pins="topology.line_table,topology.addline">
+    <div class="frame"><img src="../assets/capturas_app/manual/topology_lines.png" alt="Line data table"></div>
+    <figcaption><span class="fignum">Figure 5.6</span> — Line data.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Line table.</b> Terminals and series impedance of each branch. The
+    R/X ratio is reported, because it determines whether the DC approximation
+    is acceptable on this network.</li>
+    <li><b>Add Line</b> appends a branch between two existing buses.</li>
+  </ol>
+
+  <div class="note caution">
+    <span class="tag">Caution</span>
+    <p>The edited network is stored and reloaded the next time the application
+    starts. To return to a known state, reload one of the built-in systems
+    from the selector in section 5.1.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="powerflow" class="chapter">
+  <h2><span class="num">6</span>Running a power flow</h2>
+  <p class="purpose">Tab: <b>Power Flow</b>. Solves the network with no
+  measurements and no estimator. The result is the reference state against
+  which estimation results are compared.</p>
+
+  <figure class="shot overview" data-fig="overview_powerflow" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_powerflow.png"
+         alt="The Power Flow tab in full"></div>
+    <figcaption><span class="fignum">Figure 6.0</span> — The
+    <b>Power Flow</b> tab in full. Solver configuration above, results below. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <figure class="shot" data-fig="powerflow_controls"
+          data-pins="powerflow.method,powerflow.info,powerflow.iterations,powerflow.run,powerflow.compare">
+    <div class="frame"><img src="../assets/capturas_app/manual/powerflow_controls.png" alt="Power flow solver configuration"></div>
+    <figcaption><span class="fignum">Figure 6.1</span> — Solver configuration.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Method.</b> AC Newton-Raphson, linearised DC, or LinDistFlow.</li>
+    <li><b>Method description.</b> States the assumptions of the selected
+    method and the conditions under which they cease to hold.</li>
+    <li><b>Convergence settings.</b> Maximum iterations and tolerance, plus the
+    voltage limits used to flag violations in the results.</li>
+    <li><b>Run.</b> Solves the network and fills the result tables.</li>
+    <li><b>Compare AC/DC/LinDist.</b> Runs all three methods and reports the
+    error of each against the AC solution.</li>
+  </ol>
+
+  <figure class="shot" data-fig="powerflow_results"
+          data-pins="powerflow.buses,powerflow.branches">
+    <div class="frame"><img src="../assets/capturas_app/manual/powerflow_results.png" alt="Power flow results"></div>
+    <figcaption><span class="fignum">Figure 6.2</span> — Results after a successful run.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Bus Results.</b> Voltage magnitude, angle, generation and load per
+    bus, with the convergence status shown beside the table.</li>
+    <li><b>Branch Flows.</b> Active and reactive flow and loading per branch.
+    Every table in the application has a copy control that places its contents
+    on the clipboard in a form that can be pasted into a spreadsheet.</li>
+  </ol>
+
+  <div class="note">
+    <span class="tag">Interpretation</span>
+    <p>LinDistFlow assumes a radial network and may fail to converge on a
+    meshed one. That outcome is expected behaviour, not a defect, and is one of
+    the reasons the comparison exists.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="estimation" class="chapter">
+  <h2><span class="num">7</span>Estimating the state</h2>
+  <p class="purpose">Tab: <b>State Est.</b> Runs the estimator in isolation:
+  measurements are generated from the reference state, noise is added, and the
+  state is reconstructed from them.</p>
+
+  <figure class="shot overview" data-fig="overview_estimation" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_estimation.png"
+         alt="The State Est. tab in full"></div>
+    <figcaption><span class="fignum">Figure 7.0</span> — The
+    <b>State Est.</b> tab in full. Configuration, then the estimated state and its residuals. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <figure class="shot" data-fig="estimation_controls"
+          data-pins="estimation.method,estimation.truth,estimation.noise,estimation.seed,estimation.trace,estimation.run">
+    <div class="frame"><img src="../assets/capturas_app/manual/estimation_controls.png" alt="State estimation configuration"></div>
+    <figcaption><span class="fignum">Figure 7.1</span> — Estimator configuration.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Estimation method.</b> DC-WLS solves a single linear system for bus
+    angles. AC uses Gauss-Newton iterations over voltage magnitudes and
+    angles.</li>
+    <li><b>Ground truth.</b> Selects the reference state from which the
+    measurement vector is generated. This is what makes the comparison against
+    a known state possible.</li>
+    <li><b>Noise level.</b> The relative standard deviation applied to the
+    measurements.</li>
+    <li><b>Seed.</b> With a fixed seed the run is exactly reproducible; left
+    empty, each run draws a new noise realisation.</li>
+    <li><b>Trace execution.</b> Enables the step-by-step execution panel, which
+    reports each iteration and the intermediate matrices. It is slower and is
+    intended for study and verification.</li>
+    <li><b>Run.</b> Solves and fills the result panel.</li>
+  </ol>
+
+  <figure class="shot" data-fig="estimation_results"
+          data-pins="estimation.states,estimation.residuals">
+    <div class="frame"><img src="../assets/capturas_app/manual/estimation_results.png" alt="Estimation results"></div>
+    <figcaption><span class="fignum">Figure 7.2</span> — Estimation results.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Bus State Estimates.</b> The estimated state beside the ground
+    truth, with the deviation per bus.</li>
+    <li><b>Measurement Residuals.</b> Normalised residuals per measurement,
+    together with the objective function history, which should decrease and
+    then flatten. A residual history that does not settle indicates that the
+    measurement set, and not the solver, is the problem.</li>
+  </ol>
+
+  <div class="note">
+    <span class="tag">Recommended practice</span>
+    <p>Fix the seed whenever two configurations are being compared. Without it,
+    part of the difference observed between two runs is only the noise
+    realisation.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="baddata" class="chapter">
+  <h2><span class="num">8</span>Bad data analysis</h2>
+  <p class="purpose">Tab: <b>Bad Data</b>. Detection, identification and
+  correction of gross measurement errors and line parameter errors, in the
+  geometric formulation of Bretas. The procedure has four stages and they are
+  performed in order.</p>
+
+  <figure class="shot overview" data-fig="overview_baddata" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_baddata.png"
+         alt="The Bad Data tab in full"></div>
+    <figcaption><span class="fignum">Figure 8.0</span> — The
+    <b>Bad Data</b> tab as it opens. The four stages run down the page in
+    order; the full page is several screens tall, so this shows the top of
+    it. The panels described in this chapter follow below it.</figcaption>
+  </figure>
+
+  <h3><span class="num">8.1</span>Stage 1: measurement geometry</h3>
+
+  <figure class="shot" data-fig="baddata_setup"
+          data-pins="baddata.noise,baddata.alpha,baddata.model,baddata.analyze">
+    <div class="frame"><img src="../assets/capturas_app/manual/baddata_setup.png" alt="Bad data experiment settings"></div>
+    <figcaption><span class="fignum">Figure 8.1</span> — Experiment settings.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Noise σ</b> and the σ floor, which set the measurement accuracy
+    assumed by the estimator.</li>
+    <li><b>α.</b> Significance level of the chi-square detection test.</li>
+    <li><b>Measurement model.</b> DC-linear, with one row per meter, or
+    AC&nbsp;→&nbsp;DC, which reproduces the reference notebook. Parameter
+    attacks require the AC model.</li>
+    <li><b>Analyze Geometry.</b> Computes the geometry of the measurement set
+    before any error is injected.</li>
+  </ol>
+
+  <figure class="shot" data-fig="baddata_geometry" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/baddata_geometry.png" alt="Measurement geometry table"></div>
+    <figcaption><span class="fignum">Figure 8.2</span> — Measurement geometry, before any injection.</figcaption>
+  </figure>
+
+  <p>The table reports, per measurement, the diagonal of the hat matrix
+  (K<sub>ii</sub>), the undetectability index, the innovation index and the
+  degrees of freedom of the test. It identifies, in advance, which
+  measurements are able to hide an error. Select a row to use that measurement
+  as the attack target in the next stage.</p>
+
+  <h3><span class="num">8.2</span>Stage 2: configuring the error</h3>
+
+  <figure class="shot" data-fig="baddata_attack"
+          data-pins="baddata.target,baddata.magnitude,baddata.pipeline,baddata.run,baddata.all8">
+    <div class="frame"><img src="../assets/capturas_app/manual/baddata_attack.png" alt="Attack configuration"></div>
+    <figcaption><span class="fignum">Figure 8.3</span> — Attack configuration.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Attack target.</b> A measurement, a line parameter, or both. The
+    last two require the AC model. The summary beside the selector reports
+    K<sub>ii</sub>, the undetectability and innovation indices, σ and the true
+    value of the selected measurement, and warns when the masking risk is
+    high.</li>
+    <li><b>Error magnitude</b>, in multiples of σ for a measurement error, or
+    as a percentage of the parameter for a line error.</li>
+    <li><b>Pipeline.</b> Three independent choices: detection (chi-square on
+    the residual or on the composed measurement error), identification
+    (largest normalised residual, normalised composed error, or by line in the
+    AC case) and correction (remove the measurement, replace it by its true
+    value, or correct the line parameter). Identification by line combined
+    with correction by parameter is the sequence that repairs the line instead
+    of discarding valid data.</li>
+    <li><b>Run Pipeline.</b> Executes the selected combination.</li>
+    <li><b>Run All 8 Combos.</b> Executes the fixed 2×2×2 grid on the same
+    injection, so that strategies are compared without changing the experiment
+    underneath them.</li>
+  </ol>
+
+  <h3><span class="num">8.3</span>Stage 3: reading the result</h3>
+
+  <figure class="shot" data-fig="baddata_result" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/baddata_result.png" alt="Detection result"></div>
+    <figcaption><span class="fignum">Figure 8.4</span> — Detection result.</figcaption>
+  </figure>
+
+  <p>The result panel reports whether the chi-square test triggered, which
+  measurement the identification step selected, whether that measurement is
+  the one actually corrupted, and the state obtained after correction. Below
+  it are the scatter plot of residuals (the corrupted measurement in red,
+  false flags in orange), the hat matrix heat map, the complete per-measurement
+  table and, for parameter errors, the line signature ranking and the
+  corrected parameter.</p>
+
+  <div class="note caution">
+    <span class="tag">Caution when reading RMSE</span>
+    <p>The comparison against the true state exists only because this is a
+    validation environment. In operation there is no true state available to
+    decide a correction. A lower RMSE does not mean a more correct repair: a
+    correction that discards the measurement can look numerically better while
+    removing valid data and leaving the line parameters permanently wrong.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="workbench" class="chapter">
+  <h2><span class="num">9</span>Running several methods at once</h2>
+  <p class="purpose">Tab: <b>Workbench</b>. Runs power flow, state estimation
+  and bad data detection as a chain of blocks and presents the results side by
+  side.</p>
+
+  <figure class="shot overview" data-fig="overview_workbench" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_workbench.png"
+         alt="The Workbench tab in full"></div>
+    <figcaption><span class="fignum">Figure 9.0</span> — The
+    <b>Workbench</b> tab in full. Each block reports its own result, side by side. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <figure class="shot" data-fig="workbench_blocks"
+          data-pins="workbench.params,workbench.runall">
+    <div class="frame"><img src="../assets/capturas_app/manual/workbench_blocks.png" alt="Workbench blocks"></div>
+    <figcaption><span class="fignum">Figure 9.1</span> — Block diagram and shared settings.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Shared settings.</b> Noise level, gross error magnitude and seed,
+    applied to every block in the chain.</li>
+    <li><b>Run AC + DC + WLS.</b> Executes the chain in one step. Each block
+    also has its own run control, which is the faster way to repeat a single
+    stage after changing its input.</li>
+  </ol>
+
+  <figure class="shot" data-fig="workbench_results" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/workbench_results.png" alt="AC versus DC comparison"></div>
+    <figcaption><span class="fignum">Figure 9.2</span> — AC and DC angles compared.</figcaption>
+  </figure>
+
+  <p>The comparison chart shows the bus angles obtained by both methods, which
+  is the direct way to see where the linear approximation stops being valid on
+  the network in use. The blocks below report the normalised residuals of the
+  estimator and the outcome of the detection pipeline. <b>Run All</b> sweeps
+  the pipeline combinations instead of a single one.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="pipeline" class="chapter">
+  <h2><span class="num">10</span>The measurement chain</h2>
+  <p class="purpose">Tab: <b>Pipeline</b>. The complete chain from field to
+  control action, with every layer exposed and its own result table, and with
+  faults injected at the layer where they would actually occur.</p>
+
+  <figure class="shot overview" data-fig="overview_pipeline" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_pipeline.png"
+         alt="The Pipeline tab in full"></div>
+    <figcaption><span class="fignum">Figure 10.0</span> — The
+    <b>Pipeline</b> tab in full. Configuration, the layer strip, and the table of the selected layer. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <h3><span class="num">10.1</span>Configuring the chain</h3>
+
+  <figure class="shot" data-fig="pipeline_params"
+          data-pins="pipeline.chain,pipeline.policy,pipeline.run">
+    <div class="frame"><img src="../assets/capturas_app/manual/pipeline_params.png" alt="Operational chain settings"></div>
+    <figcaption><span class="fignum">Figure 10.1</span> — Chain settings.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Layer settings.</b> Number of RTUs, base delay and jitter of the
+    channel, packet loss rate, the age after which a point is considered
+    stale, and the seed. Measurement noise and the control layer (OPF, with
+    its voltage and loading limits) are enabled separately.</li>
+    <li><b>Unknown switch policy.</b> What the topology processor does with an
+    inconclusive breaker reading: keep the last known state, assume closed,
+    assume open, or infer the state from the measured flow.</li>
+    <li><b>Run chain.</b> Executes the chain end to end.</li>
+  </ol>
+
+  <h3><span class="num">10.2</span>Injecting a fault</h3>
+
+  <figure class="shot" data-fig="pipeline_attacks"
+          data-pins="pipeline.attack,pipeline.add">
+    <div class="frame"><img src="../assets/capturas_app/manual/pipeline_attacks.png" alt="Fault and attack injection"></div>
+    <figcaption><span class="fignum">Figure 10.2</span> — Fault and attack injection.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Fault selection.</b> Each fault has its own target (an RTU, a
+    switch, a sensor) and its own parameters, which appear once it is
+    selected.</li>
+    <li><b>Add.</b> Appends the configured fault to the list. Several faults
+    can be active in the same run; <i>Clear all</i> empties the list.</li>
+  </ol>
+
+  <div class="note good">
+    <span class="tag">Why injection per layer</span>
+    <p>Faults are injected at the layer where the failure would physically
+    occur, not on the finished measurement vector. This is what makes the
+    resulting residual signature realistic, instead of an isolated outlier
+    that any detector would find.</p>
+  </div>
+
+  <h3><span class="num">10.3</span>Following the data</h3>
+
+  <figure class="shot" data-fig="pipeline_layers"
+          data-pins="pipeline.layer_meters,pipeline.layer_est,pipeline.layer_opf">
+    <div class="frame"><img src="../assets/capturas_app/manual/pipeline_layers.png" alt="Layer strip"></div>
+    <figcaption><span class="fignum">Figure 10.3</span> — The layer strip after a run.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Field and measurement layers.</b> The true state and the readings
+    taken from it.</li>
+    <li><b>Estimation layer.</b> Select any block to display that layer's own
+    table below the strip; the strip stays visible, so the chain never leaves
+    the screen.</li>
+    <li><b>Control layer.</b> The setpoints computed on the estimated state,
+    and the violations that remain hidden when the estimate is wrong.</li>
+  </ol>
+
+  <figure class="shot" data-fig="pipeline_trace" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/pipeline_trace.png" alt="End-to-end trace"></div>
+    <figcaption><span class="fignum">Figure 10.4</span> — End-to-end trace of one measurement.</figcaption>
+  </figure>
+
+  <p>Selecting a measurement in the trace panel shows its complete life across
+  the chain: the meter reading, the RTU point, the transmitted packet, the
+  SCADA record and the entry in the measurement vector. Without it, a fault
+  injected in the communication channel is visible only as a large residual.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="console" class="chapter">
+  <h2><span class="num">11</span>The operator view</h2>
+  <p class="purpose">Tab: <b>Console</b>. The same chain as Chapter 10,
+  presented the way a control room would show it. It runs once automatically
+  when the tab is opened.</p>
+
+  <figure class="shot overview" data-fig="overview_console" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_console.png"
+         alt="The Console tab in full"></div>
+    <figcaption><span class="fignum">Figure 11.0</span> — The
+    <b>Console</b> tab in full. Status band, chain, diagram, alarms and telemetry. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <figure class="shot" data-fig="console_controls"
+          data-pins="console.situation,console.run">
+    <div class="frame"><img src="../assets/capturas_app/manual/console_controls.png" alt="Scenario selection"></div>
+    <figcaption><span class="fignum">Figure 11.1</span> — Scenario selection.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Situation.</b> Six predefined scenarios: normal operation, a
+    degraded link on one RTU, packet loss on the network, a falsified breaker
+    status, disagreeing breaker contacts, and a compromised RTU. Each carries
+    its own settings and faults, so a situation can be demonstrated without
+    configuring anything.</li>
+    <li><b>Run.</b> Executes the chain for the selected scenario.</li>
+  </ol>
+
+  <figure class="shot" data-fig="console_status"
+          data-pins="console.alarm_counts,console.snapshot">
+    <div class="frame"><img src="../assets/capturas_app/manual/console_status.png" alt="Status band"></div>
+    <figcaption><span class="fignum">Figure 11.2</span> — Status band.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Recommendation and alarm counts.</b> Whether the delivered state
+    supports acting on the network, with the number of alarms by priority.</li>
+    <li><b>Run identification.</b> Network name, snapshot time, run identifier
+    and elapsed time. The snapshot time is the span of the measurement set,
+    not a single instant.</li>
+  </ol>
+
+  <figure class="shot" data-fig="console_chain"
+          data-pins="console.stage_field,console.stage_est,console.stage_dispatch">
+    <div class="frame"><img src="../assets/capturas_app/manual/console_chain.png" alt="Process mimic of the chain"></div>
+    <figcaption><span class="fignum">Figure 11.3</span> — Process mimic of the chain.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Field and acquisition stages.</b> Each stage carries its own
+    severity colour and a summary figure.</li>
+    <li><b>Estimator stage.</b> Selecting any stage displays the evidence
+    behind its colour immediately below the strip.</li>
+    <li><b>Dispatch stage.</b> A control room today sees only this last box.
+    The strip shows what the rest of the path did to the data before it
+    arrived there.</li>
+  </ol>
+
+  <figure class="shot" data-fig="console_alarms" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/console_alarms.png" alt="Alarm list"></div>
+    <figcaption><span class="fignum">Figure 11.4</span> — Alarm and event list.</figcaption>
+  </figure>
+
+  <figure class="shot" data-fig="console_telemetry" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/console_telemetry.png" alt="Telemetry point list"></div>
+    <figcaption><span class="fignum">Figure 11.5</span> — Telemetry point list.</figcaption>
+  </figure>
+
+  <p>The alarm list is chronological, priority coded and names the source
+  equipment. The telemetry list reports point identifier, equipment, quality
+  flag and data age, which is where a stale value entering the estimator as if
+  it were current becomes visible.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="agents" class="chapter">
+  <h2><span class="num">12</span>Multi-agent estimation</h2>
+  <p class="purpose">Tab: <b>Agents</b>. The network is partitioned into
+  islands, each island estimates its own portion, and agents exchange
+  information across layers.</p>
+
+  <figure class="shot overview" data-fig="overview_agents" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_agents.png"
+         alt="The Agents tab in full"></div>
+    <figcaption><span class="fignum">Figure 12.0</span> — The
+    <b>Agents</b> tab in full. Islands on the left, agent activity on the right. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <figure class="shot" data-fig="agents_controls"
+          data-pins="agents.method,agents.repartition,agents.scenario,agents.plugins,agents.run">
+    <div class="frame"><img src="../assets/capturas_app/manual/agents_controls.png" alt="Agent framework controls"></div>
+    <figcaption><span class="fignum">Figure 12.1</span> — Partitioning and simulation controls.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Partition method.</b> Spectral graph partitioning, or partitioning
+    along radial feeders. The number of islands is set by the adjacent
+    control.</li>
+    <li><b>Re-Partition.</b> Recomputes the partition. The partition is also
+    recomputed automatically when the tab is opened or the network
+    changes.</li>
+    <li><b>Scenario.</b> The situation simulated during the agent run, using
+    the same set as the Console tab.</li>
+    <li><b>Plugins.</b> Opens the plugin manager, which is the extension point
+    for adding agents without modifying the core.</li>
+    <li><b>Run Agentic DSSE.</b> Runs distributed estimation over the current
+    islands. It is enabled only once a partition exists.</li>
+  </ol>
+
+  <figure class="shot" data-fig="agents_canvas"
+          data-pins="agents.map,agents.feeder,agents.island">
+    <div class="frame"><img src="../assets/capturas_app/manual/agents_canvas.png" alt="Agent topology canvas"></div>
+    <figcaption><span class="fignum">Figure 12.2</span> — Partitioned network.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Spatial map</b> of the partitioned network, islands in distinct
+    colours, with the boundary nodes marked.</li>
+    <li><b>Radial feeder tree</b>, the same partition drawn along the
+    feeders.</li>
+    <li><b>Island selection.</b> Isolates one island at a time, to inspect what
+    a single agent sees.</li>
+  </ol>
+
+  <figure class="shot" data-fig="agents_log"
+          data-pins="agents.log_all,agents.log_cries">
+    <div class="frame"><img src="../assets/capturas_app/manual/agents_log.png" alt="Agent event log"></div>
+    <figcaption><span class="fignum">Figure 12.3</span> — Agent event log.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>All events</b>, in chronological order, with the agent that emitted
+    each one.</li>
+    <li><b>Warnings and cries.</b> The on-demand protocol by which an agent
+    reports that it cannot produce a trustworthy result, instead of returning
+    a silently wrong number. The benchmark panel beside the log compares the
+    distributed run against the centralised one.</li>
+  </ol>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="help" class="chapter">
+  <h2><span class="num">13</span>Built-in reference</h2>
+  <p class="purpose">Tab: <b>Help</b>. The mathematical documentation of the
+  methods implemented in the application.</p>
+
+  <figure class="shot overview" data-fig="overview_help" data-pins="">
+    <div class="frame"><img src="../assets/capturas_app/manual/overview_help.png"
+         alt="The Help tab in full"></div>
+    <figcaption><span class="fignum">Figure 13.0</span> — The
+    <b>Help</b> tab in full. Categories on the left, the selected topic on the right. The panels described in this
+    chapter are all located in this screen.</figcaption>
+  </figure>
+
+  <figure class="shot" data-fig="help_navigation"
+          data-pins="help.filter,help.categories,help.topic">
+    <div class="frame"><img src="../assets/capturas_app/manual/help_navigation.png" alt="Help tab"></div>
+    <figcaption><span class="fignum">Figure 13.1</span> — Help navigation.</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li><b>Paradigm filter.</b> All topics, static estimation only, or dynamic
+    estimation only (Kalman and extended Kalman filtering).</li>
+    <li><b>Categories</b>, with the number of topics in each: algorithms, key
+    equations, bad data, operational chain, sensors and measurements,
+    glossary, case studies, data generation and the multi-agent framework.</li>
+    <li><b>Topic.</b> Each topic states the formulation with rendered
+    equations, the assumptions and the references. Reaching a topic through
+    the search palette (<kbd>Ctrl</kbd>+<kbd>K</kbd>) is usually faster than
+    navigating the list.</li>
+  </ol>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="conventions" class="chapter">
+  <h2><span class="num">14</span>Conventions and shortcuts</h2>
+
+  <table>
+    <tr><th style="width:32%">Element</th><th>Behaviour</th></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td>
+        <td>Opens the documentation search from any tab.</td></tr>
+    <tr><td>Copy control on tables</td>
+        <td>Places the table contents on the clipboard, formatted for a
+        spreadsheet or a notebook.</td></tr>
+    <tr><td>Information icon on columns</td>
+        <td>States what the column contains and how it was computed.</td></tr>
+    <tr><td>Method description control</td>
+        <td>States the assumptions and limits of the selected method.</td></tr>
+    <tr><td>Greyed input fields</td>
+        <td>Outputs, not inputs: quantities known only after solving.</td></tr>
+    <tr><td>Seed field</td>
+        <td>Empty means a new random draw on every run; a fixed value makes the
+        run reproducible.</td></tr>
+    <tr><td>Diagram conventions</td>
+        <td>Buses as nodes, branches as edges, voltage as node colour, loading
+        as edge width.</td></tr>
+    <tr><td>Switch status codes</td>
+        <td>0 intermediate, 1 open, 2 closed, 3 indeterminate; 1 and 2 are the
+        conclusive readings.</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="troubleshooting" class="chapter">
+  <h2><span class="num">15</span>Troubleshooting</h2>
+
+  <table>
+    <tr><th style="width:34%">Symptom</th><th>Cause and resolution</th></tr>
+    <tr><td>Every tab reports a connection error</td>
+        <td>The backend is not running. In a development environment, check the
+        backend terminal; in the installed application, close and reopen it so
+        that a new local port is selected.</td></tr>
+    <tr><td>A run control is disabled</td>
+        <td>A prerequisite step has not been completed. In Bad Data, the
+        pipeline requires the geometry stage and a selected measurement; in
+        Agents, the simulation requires an existing partition.</td></tr>
+    <tr><td>LinDistFlow does not converge</td>
+        <td>The method assumes a radial network. Expected on meshed
+        networks.</td></tr>
+    <tr><td>Loading a large case takes several seconds</td>
+        <td>Expected: the network is built by the backend, and transmission
+        cases contain far more buses than the 5-bus and 14-bus systems.</td></tr>
+    <tr><td>Results change between identical runs</td>
+        <td>The seed field is empty, so each run draws a new noise
+        realisation.</td></tr>
+    <tr><td>The network is not the expected one after restart</td>
+        <td>The edited network is retained between sessions. Reload a built-in
+        system from the Topology tab.</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="maintenance" class="chapter">
+  <h2><span class="num">16</span>Maintaining this manual</h2>
+
+  <p>The figures in this manual, and the position of every numbered mark drawn
+  on them, are generated from the running application rather than written by
+  hand:</p>
+
+  <pre><code>.venv\Scripts\python.exe scripts\capturar_screenshots_app.py</code></pre>
+
+  <p>The script opens the application, visits each tab, performs the main
+  action of that tab, and crops the panel documented by each figure. It then
+  queries the document for the rectangle of every marked element and writes
+  those rectangles to <code>coords.js</code>, next to the images. This page
+  refers to each mark by name and converts the rectangle to a percentage of
+  the image, so figures and marks are always regenerated together.</p>
+
+  <p>Figures are cropped to the panel they document rather than captured as
+  full pages, because this manual is also produced as a PDF and a full-page
+  screenshot is several thousand pixels tall.</p>
+
+  <h3><span class="num">16.1</span>Adding a new mark</h3>
+  <ol class="steps plain">
+    <li>Add an entry to <code>MANUAL_FIGURES</code> in the capture script, or a
+    pin to an existing figure, giving a name and how to locate the element.</li>
+    <li>Reference that name in the <code>data-pins</code> attribute of the
+    figure in this document, in the same order as the numbered steps beside
+    it.</li>
+    <li>Run the script. A pin that no longer matches an element is not drawn
+    and is reported in the figure caption, rather than silently pointing at
+    the wrong place.</li>
+  </ol>
+
+  <h3><span class="num">16.2</span>Producing a PDF</h3>
+  <p>Open this file in a browser and print to PDF with background graphics
+  enabled, so that the marks and panel backgrounds are preserved. The page
+  layout, the table of contents and the page breaks between chapters are
+  defined for A4.</p>
+</section>
+
+<footer class="doc">
+  DSSE Workbench user manual · Université Grenoble Alpes, CNRS, G2Elab ·
+  figures generated by <code>scripts/capturar_screenshots_app.py</code>.
+</footer>
+</main>
+</div>
+
+<button id="pintoggle" type="button">Hide marks</button>
+
+<script src="../assets/capturas_app/manual/coords.js"></script>
+<script>
+(function () {
+  var C = window.MANUAL_COORDS || null;
+  var when = C ? C.geradoEm : null;
+
+  var stamp = document.getElementById('stamp');
+  stamp.textContent = when ? 'screenshots: ' + when : 'coords.js missing — run the capture script';
+  if (when) document.getElementById('stamp2').textContent = 'captured ' + when;
+
+  // ── Numbered marks ────────────────────────────────────────────────────
+  // Positions come from coords.js in image pixels and are converted to
+  // percentages here, so a mark tracks its image at any rendered width,
+  // including in print.
+  // On-screen height a figure may reach before it is scaled down. A crop is a
+  // panel and stays small; an opener is a whole page and needs the room.
+  var HEIGHT_CAP = { crop: 620, overview: 1000 };
+
+  document.querySelectorAll('figure.shot').forEach(function (fig) {
+    var name = fig.dataset.fig;
+    var data = C && C.figuras && C.figuras[name];
+    var frame = fig.querySelector('.frame');
+
+    // Size the frame first, for EVERY figure — an opener carries no pins and
+    // would otherwise fall through the early return below and keep filling
+    // the column.
+    if (data && data.w && data.h) {
+      var cap = fig.classList.contains('overview') ? HEIGHT_CAP.overview : HEIGHT_CAP.crop;
+      var maxW = data.w;                       // never wider than it is in the app
+      if (data.h > cap) {
+        maxW = Math.min(maxW, Math.round(data.w * cap / data.h));
+      }
+      frame.style.maxWidth = maxW + 'px';
+    }
+
+    var refs = (fig.dataset.pins || '').split(',')
+      .map(function (s) { return s.trim(); })
+      .filter(Boolean);
+    if (!refs.length) return;
+
+    var missing = [];
+
+    refs.forEach(function (ref, i) {
+      var n = i + 1;
+      var box = data && data.pins && data.pins[ref];
+      if (!box) { missing.push(n); return; }
+      var el = document.createElement('span');
+      el.className = 'hl';
+      el.style.left = (100 * box.x / data.w) + '%';
+      el.style.top = (100 * box.y / data.h) + '%';
+      el.style.width = (100 * box.w / data.w) + '%';
+      el.style.height = (100 * box.h / data.h) + '%';
+      el.innerHTML = '<b>' + n + '</b>';
+      frame.appendChild(el);
+    });
+
+    // Alvos vizinhos (uma barra de botoes, por exemplo) empurram os numeros
+    // uns sobre os outros. Quando dois ficam perto demais, o segundo desce
+    // para o canto inferior do seu retangulo.
+    var badges = frame.querySelectorAll('.hl b');
+    var postos = [];
+    badges.forEach(function (b) {
+      var r = b.getBoundingClientRect();
+      var colide = postos.some(function (q) {
+        return Math.abs(q.x - r.left) < 26 && Math.abs(q.y - r.top) < 26;
+      });
+      if (colide) {
+        b.style.top = 'auto';
+        b.style.bottom = '-10px';
+        r = b.getBoundingClientRect();
+      }
+      postos.push({ x: r.left, y: r.top });
+    });
+
+    if (missing.length) {
+      var warn = document.createElement('span');
+      warn.className = 'miss';
+      warn.textContent = ' Marks ' + missing.join(', ')
+        + ' unavailable; re-run the capture script.';
+      fig.querySelector('figcaption').appendChild(warn);
+    }
+  });
+
+  var toggle = document.getElementById('pintoggle');
+  toggle.addEventListener('click', function () {
+    var off = document.body.classList.toggle('no-pins');
+    toggle.textContent = off ? 'Show marks' : 'Hide marks';
+  });
+
+  // ── Printed table of contents, built from the sidebar ──────────────────
+  var target = document.getElementById('tocprint');
+  document.querySelectorAll('#toclist > li').forEach(function (li) {
+    var copy = document.createElement('li');
+    if (li.classList.contains('part')) {
+      copy.className = 'part';
+      copy.textContent = li.textContent;
+    } else {
+      copy.innerHTML = li.innerHTML;
+    }
+    target.appendChild(copy);
+  });
+
+  // ── Sidebar follows the section on screen ──────────────────────────────
+  var links = {};
+  document.querySelectorAll('nav.toc a').forEach(function (a) {
+    links[a.getAttribute('href').slice(1)] = a;
+  });
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      var a = links[en.target.id];
+      if (!a || !en.isIntersecting) return;
+      Object.keys(links).forEach(function (k) { links[k].classList.remove('active'); });
+      a.classList.add('active');
+    });
+  }, { rootMargin: '-8% 0px -78% 0px' });
+  document.querySelectorAll('section[id]').forEach(function (s) { obs.observe(s); });
+})();
+</script>
+</body>
+</html>
