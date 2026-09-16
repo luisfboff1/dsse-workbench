@@ -1331,7 +1331,24 @@ def parameter_sensitivity_library(
     """`S_l = dh/dp_l` (m x 3) em unidades FISICAS -- sem dividir por sigma,
     ao contrario de `build_line_subspace_library`, porque o GLRT ja carrega a
     metrica `W`. Calculada UMA vez, offline, num ponto de operacao de
-    planejamento (flat start nao serve)."""
+    planejamento (flat start nao serve).
+
+    **Linhas FORA de servico no `net_base` (tie-switches normalmente abertos)
+    usam uma coluna diferente, `(m x 1)`, nao as `(m x 3)` de `r/x/c`.** Nao
+    ha "r/x/c atual" para perturbar num ramo ausente do Ybus -- +-`eps`% de um
+    parametro que nao entra na formacao de `H` nao muda `h(x)` em nada
+    (medido: `||S||=0` para tie-switch, ver
+    `docs/governanca/decisoes_tecnicas.md`, 16/09/2026, achado do
+    `cadeia_scada_ataques_switch_capacitor.ipynb` §8c). A direcao certa para
+    esse caso e a diferenca EXATA de FECHAR o ramo com a impedancia real que
+    ele ja tem, mantendo o estado fixo em `x_ref` -- o mesmo mecanismo que
+    `topology_sensitivity_library`
+    (`scripts/classificar_tres_tipos_glrt.py`) ja usa para medir colinearidade
+    no sentido oposto (abrir uma linha que comeca fechada). Chamadores que
+    tratam `sens_lib[line_id]` como sempre `(m x 3)` (ex.: `dp_hat` de 3
+    componentes especifico de `g/b/b_sh`) precisam checar a forma antes de
+    interpretar as colunas -- `glrt_delta_j`/`fit_parameter_change` ja fazem
+    isso de forma generica via SVD, entao funcionam sem alteracao."""
 
     import pandapower as pp
 
@@ -1351,6 +1368,19 @@ def parameter_sensitivity_library(
 
     lib: dict[int, np.ndarray] = {}
     for line_id in [int(i) for i in net_base.line.index]:
+        if not bool(net_plan.line.at[line_id, "in_service"]):
+            # Tie-switch normalmente aberto: a direcao e "fechar o ramo", nao
+            # +-eps% de r/x/c em torno de um valor que nao participa do Ybus.
+            try:
+                net_closed = deepcopy(net_plan)
+                net_closed.line.at[line_id, "in_service"] = True
+                pp.runpp(net_closed, calculate_voltage_angles=True, init="flat", numba=False)
+                model_closed = build_ac_ybus_model_from_pandapower(net_closed, list(measurements))
+                lib[line_id] = (model_closed.h(x_ref) - h_ref).reshape(-1, 1)
+            except Exception:
+                lib[line_id] = np.zeros((len(measurements), 1))
+            continue
+
         cols = []
         for which in ("dg_pct", "db_pct", "dbsh_pct"):
             kwargs = {"dg_pct": 0.0, "db_pct": 0.0, "dbsh_pct": 0.0}

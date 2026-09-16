@@ -12,31 +12,31 @@ Este documento explica como funciona a distribuição pública do **DSSE Simulat
 
 ---
 
-## 2. A Arquitetura de Repositório Público de Releases
+## 2. A Arquitetura de Repositório Público Aberto (Monorepo Local + Sync)
 
-Para resolver isso sem abrir o código da tese, a distribuição é desacoplada em dois repositórios:
+Para resolver isso e ao mesmo tempo fornecer uma verdadeira ferramenta Open Source (MIT) à comunidade científica sem expor as pesquisas confidenciais da tese:
 
 ```
-[Seu Computador]
+[Seu Computador - 1 única pasta de trabalho]
+c:\Users\boffl\Github\phd-thesis\
    │
-   │  git push origin app-vX.Y.Z
+   ├── docs/, pesquisa/, escrita/, notebooks/  ──> [luisfboff1/phd-thesis] (PRIVADO)
+   │                                               (Tese, notas, atas, experimentos)
+   │
+   ├── app/, src/tese_dsse/, packaging/        ──> [luisfboff1/dsse-workbench] (PÚBLICO)
+   │   │                                           (Código aberto MIT, releases, issues)
+   │   │  (1) Sincronização de código:
+   │   │      python scripts/sync_public_workbench.py --push
+   │   │
+   │   ▼  (2) Publicação de instaladores (.exe):
+   │          git tag app-vX.Y.Z && git push origin app-vX.Y.Z
+   │          GitHub Actions compila e publica a Release lá
+   │
    ▼
-[luisfboff1/phd-thesis] (PRIVADO)
-   │  - Contém todo o código-fonte, modelos e simulações
-   │  - GitHub Actions (.github/workflows/release-app.yml) roda aqui
-   │  - Compila o backend (.exe) e o frontend
-   │  - Usa o secret RELEASES_GH_TOKEN para publicar
-   │
-   ▼ (upload direto via GitHub Actions)
-[luisfboff1/dsse-workbench-releases] (PÚBLICO)
-   │  - Repositório público vazio, dedicado exclusivamente a releases
-   │  - Não contém código-fonte da tese
-   │  - Hospeda os instaladores: Setup-X.Y.Z.exe, latest.yml, zip
-   │
-   ▼ (download anônimo sem token)
-[Usuários Finais & App Instalado]
-   - autoUpdater consulta luisfboff1/dsse-workbench-releases
-   - Download de updates e notificações funcionam 100% sem login
+[Usuários Finais, Desenvolvedores & Comunidade]
+   - Podem clonar o código aberto: git clone https://github.com/luisfboff1/dsse-workbench
+   - autoUpdater consulta luisfboff1/dsse-workbench e atualiza sem autenticação
+   - Podem contribuir com PRs (que você puxa com: python scripts/sync_public_workbench.py --pull)
 ```
 
 ---

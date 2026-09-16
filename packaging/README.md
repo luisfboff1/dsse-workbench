@@ -86,7 +86,17 @@ git tag app-v0.6.2 && git push origin app-v0.6.2
 ```
 
 [.github/workflows/release-app.yml](../.github/workflows/release-app.yml) faz o
-resto e publica os instaladores diretamente no repositório público de releases.
+resto e publica os instaladores diretamente no repositório público
+[`luisfboff1/dsse-workbench`](https://github.com/luisfboff1/dsse-workbench).
+
+Para manter o código-fonte aberto da ferramenta sincronizado com o repositório público:
+```powershell
+python scripts/sync_public_workbench.py --push
+```
+E para incorporar contribuições/PRs da comunidade de volta ao workspace:
+```powershell
+python scripts/sync_public_workbench.py --pull
+```
 
 ## O que o usuário recebe
 
