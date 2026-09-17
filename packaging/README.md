@@ -100,15 +100,16 @@ python scripts/sync_public_workbench.py --pull
 
 ## O que o usuário recebe
 
-| Artefato | Wizard | Atualização automática |
-|---|---|---|
-| `DSSE Workbench Setup <v>.exe` | sim (escolhe pasta, cria atalhos) | **sim** |
-| `DSSE Workbench <v>.exe` (portable) | não instala, roda direto | não |
-| `DSSE Workbench-<v>-win.zip` | não | não |
-
-Só o instalador NSIS recebe atualização — `portable` e `zip` não têm como se
-substituir no lugar. Divulgue o instalador como download principal e deixe os
-outros dois para quem não pode instalar nada na máquina.
+| Plataforma | Artefato | Tipo | Atualização automática |
+|---|---|---|---|
+| **Windows** | `DSSE-Workbench-Setup-<v>.exe` | Instalador NSIS (cria atalhos) | **sim** |
+| **Windows** | `DSSE-Workbench-<v>.exe` | Portátil (não instala, roda direto) | não |
+| **Windows** | `DSSE-Workbench-<v>-win.zip` | Arquivo compactado portátil | não |
+| **macOS** | `DSSE-Workbench-<v>.dmg` | Imagem de disco (Apple Silicon + Intel) | não (DMG) |
+| **macOS** | `DSSE-Workbench-<v>-mac.zip` | Binário universal compactado | **sim** |
+| **Linux** | `DSSE-Workbench-<v>.AppImage` | Executável universal portátil | não |
+| **Linux** | `DSSE-Workbench_<v>_amd64.deb` | Pacote nativo Debian / Ubuntu | não |
+| **Geral** | `DSSE-Workbench-Manual.pdf` | Manual do Usuário ilustrado A4 | — |
 
 Para trocar o wizard por instalação de um clique só, mude `"oneClick"` para
 `true` em `build.nsis`.

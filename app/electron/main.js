@@ -9,6 +9,7 @@
  */
 
 const { app, BrowserWindow, shell, dialog, ipcMain, Menu } = require('electron')
+const fs = require('fs')
 const { spawn } = require('child_process')
 const path = require('path')
 const readline = require('readline')
@@ -36,6 +37,16 @@ function backendExecutable() {
 function startBackend() {
   return new Promise((resolve, reject) => {
     const exePath = backendExecutable()
+
+    if (process.platform !== 'win32') {
+      try {
+        if (fs.existsSync(exePath)) {
+          fs.chmodSync(exePath, 0o755)
+        }
+      } catch (err) {
+        console.warn('chmod on backend executable failed:', err)
+      }
+    }
 
     backend = spawn(exePath, [], {
       // O backend grava cenários aqui. Passar explícito mantém app e
