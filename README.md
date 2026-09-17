@@ -8,10 +8,13 @@
 
 [![GitHub Release](https://img.shields.io/github/v/release/luisfboff1/dsse-workbench?color=blue&label=Latest%20Version)](https://github.com/luisfboff1/dsse-workbench/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20x64-informational)](#)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](#)
 
 [📥 Download Installer (.exe)](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-Setup-0.6.2.exe) •
 [🚀 Download Portable (.exe)](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-0.6.2.exe) •
+[📥 Download Installer (.exe)](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-Setup-0.6.3.exe) •
+[🚀 Download Portable (.exe)](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-0.6.3.exe) •
 [📖 User Manual (PDF)](docs/manual/manual_app.pdf) •
 [🌐 Online Manual](https://luisfboff1.github.io/dsse-workbench/) •
 [📦 All Releases](https://github.com/luisfboff1/dsse-workbench/releases)
@@ -63,13 +66,22 @@ The workbench integrates power flow solvers, distribution system state estimatio
 
 ---
 
+## 📥 Installation & Running (End-Users)
 ## 📥 Installation & Running (Multi-Platform)
 
+### Option 1: Official Installer (Recommended)
+1. Download **[DSSE-Workbench-Setup-0.6.2.exe](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-Setup-0.6.2.exe)**.
+2. Run the installer. It creates desktop and start menu shortcuts and enables automatic background updates.
+3. *Windows SmartScreen note:* As an academic open-source build without a paid Microsoft code-signing certificate, Windows may show a protection prompt. Click **"More info" (Mais informações) ➔ "Run anyway" (Executar assim mesmo)**.
 DSSE Simulation Workbench is packaged for **Windows, macOS, and Linux**:
 
+### Option 2: Portable Executable
+- Download **[DSSE-Workbench-0.6.2.exe](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-0.6.2.exe)** and double-click to run directly without installation.
 ### 🪟 Windows
 - **Installer (Recommended):** Download **[DSSE-Workbench-Setup-0.6.2.exe](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-Setup-0.6.2.exe)** (creates shortcuts & enables background auto-updates).
 - **Portable Executable:** Download **[DSSE-Workbench-0.6.2.exe](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-0.6.2.exe)** (runs directly without installation).
+- **Installer (Recommended):** Download **[DSSE-Workbench-Setup-0.6.3.exe](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-Setup-0.6.3.exe)** (creates shortcuts & enables background auto-updates).
+- **Portable Executable:** Download **[DSSE-Workbench-0.6.3.exe](https://github.com/luisfboff1/dsse-workbench/releases/latest/download/DSSE-Workbench-0.6.3.exe)** (runs directly without installation).
 - *SmartScreen prompt:* As an academic open-source release without a paid Microsoft code-signing certificate, Windows may show a protection prompt. Click **"More info" (Mais informações) ➔ "Run anyway" (Executar assim mesmo)**.
 
 ### 🍏 macOS (Apple Silicon & Intel)
