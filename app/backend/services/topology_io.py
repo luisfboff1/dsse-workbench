@@ -609,7 +609,9 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
         else:
             raw_vn = b.get("nominal_voltage")
             if raw_vn:
-                vn_kv = float(raw_vn) / 1000.0 if float(raw_vn) > 100.0 else float(raw_vn)
+                vn_kv = (
+                    float(raw_vn) / 1000.0 if float(raw_vn) > 100.0 else float(raw_vn)
+                )
             else:
                 vn_kv = 20.0 if ("MV" in bid or "BUZEN" in bid) else 0.4
 
@@ -728,7 +730,7 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
             pfe_kw = float(tp.get("p0", 200.0)) / 1000.0
             i0_pct = float(tp.get("i0", 0.02)) * 100.0
 
-    # Loads (somando potências de fases ativas e reativas)
+            # Loads (somando potências de fases ativas e reativas)
             v1 = float(net.bus.at[bus_map[b1], "vn_kv"])
             v2 = float(net.bus.at[bus_map[b2], "vn_kv"])
             hv_b = bus_map[b1] if v1 >= v2 else bus_map[b2]
@@ -928,12 +930,20 @@ def _import_pandapower_excel(file_bytes: bytes) -> dict:
 
     with pd.ExcelFile(io.BytesIO(file_bytes)) as xl:
         sheet_names_lower = {str(s).strip().lower() for s in xl.sheet_names}
-        if "no" in sheet_names_lower or "coordonnees" in sheet_names_lower or "parametres" in sheet_names_lower:
-            raise ValueError("Detected IEEE tabular Excel benchmark format, not pandapower Excel")
+        if (
+            "no" in sheet_names_lower
+            or "coordonnees" in sheet_names_lower
+            or "parametres" in sheet_names_lower
+        ):
+            raise ValueError(
+                "Detected IEEE tabular Excel benchmark format, not pandapower Excel"
+            )
         if "bus" not in sheet_names_lower or "line" not in sheet_names_lower:
             raise ValueError("Not a pandapower Excel network (missing bus/line sheets)")
         # Verificar se as colunas da aba bus batem com pandapower (vn_kv) ou IEEE
-        sheet_bus_name = next(s for s in xl.sheet_names if str(s).strip().lower() == "bus")
+        sheet_bus_name = next(
+            s for s in xl.sheet_names if str(s).strip().lower() == "bus"
+        )
         bus_sample = xl.parse(sheet_bus_name, nrows=2)
         cols_lower = {str(c).lower() for c in bus_sample.columns}
         if "vn_kv" not in cols_lower and "in_service" not in cols_lower:

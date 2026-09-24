@@ -683,13 +683,14 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
 
     function drawNodes(parent: d3.Selection<SVGGElement, unknown, null, undefined>, nodes: Node[]) {
       const sel = parent.append('g').selectAll('g').data(nodes).join('g')
+      const isDense = nodes.length > 100
 
       sel
         .append('circle')
         .attr('r', (d: Node) => {
-          if (d.type === 'slack') return 22
-          if (d.type === 'pv') return 18
-          return 15
+          if (d.type === 'slack') return isDense ? 12 : 22
+          if (d.type === 'pv') return isDense ? 9 : 18
+          return isDense ? 6.5 : 15
         })
         .attr('fill', (d: Node) => {
           const solvedVoltage = busResults.get(d.id)?.voltage
@@ -699,13 +700,13 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
           return 'var(--color-muted)'
         })
         .attr('stroke', 'var(--color-foreground)')
-        .attr('stroke-width', 2)
+        .attr('stroke-width', isDense ? 1.2 : 2)
 
       sel
         .append('text')
         .attr('text-anchor', 'middle')
-        .attr('dy', 4)
-        .attr('font-size', 10.5)
+        .attr('dy', isDense ? 3 : 4)
+        .attr('font-size', isDense ? 7.5 : 10.5)
         .attr('font-weight', 600)
         .attr('fill', (d: Node) => {
           const solved = busResults.get(d.id)
@@ -718,8 +719,8 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         sel
           .append('text')
           .attr('text-anchor', 'middle')
-          .attr('dy', -28)
-          .attr('font-size', 9)
+          .attr('dy', isDense ? -14 : -28)
+          .attr('font-size', isDense ? 7.5 : 9)
           .attr('font-weight', 700)
           .attr('fill', 'var(--color-foreground)')
           .text((d: Node) => {
@@ -728,28 +729,35 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
           })
       }
 
-      const genIndicator = sel.filter((d: Node) => d.pGen > 0).append('g').attr('transform', 'translate(15, -15)')
-      genIndicator.append('circle').attr('r', 6.5).attr('fill', 'var(--color-status-good)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
-      genIndicator.append('text').attr('text-anchor', 'middle').attr('dy', 3.5).attr('font-size', 8.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('G')
+      const genOffset = isDense ? 8 : 15
+      const genIndicator = sel.filter((d: Node) => d.pGen > 0).append('g').attr('transform', `translate(${genOffset}, ${-genOffset})`)
+      genIndicator.append('circle').attr('r', isDense ? 4 : 6.5).attr('fill', 'var(--color-status-good)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
+      genIndicator.append('text').attr('text-anchor', 'middle').attr('dy', isDense ? 2 : 3.5).attr('font-size', isDense ? 5.5 : 8.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('G')
 
-      const loadIndicator = sel.filter((d: Node) => d.pLoad > 0).append('g').attr('transform', 'translate(-15, -15)')
-      loadIndicator.append('rect').attr('x', -5).attr('y', -5).attr('width', 10).attr('height', 10).attr('fill', 'var(--color-destructive)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
-      loadIndicator.append('text').attr('text-anchor', 'middle').attr('dy', 3.5).attr('font-size', 8.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('L')
+      const loadOffset = isDense ? 8 : 15
+      const loadIndicator = sel.filter((d: Node) => d.pLoad > 0).append('g').attr('transform', `translate(${-loadOffset}, ${-loadOffset})`)
+      loadIndicator.append('rect').attr('x', isDense ? -3 : -5).attr('y', isDense ? -3 : -5).attr('width', isDense ? 6 : 10).attr('height', isDense ? 6 : 10).attr('fill', 'var(--color-destructive)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
+      loadIndicator.append('text').attr('text-anchor', 'middle').attr('dy', isDense ? 2 : 3.5).attr('font-size', isDense ? 5.5 : 8.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('L')
 
-      const dgIndicator = sel.filter((d: Node) => (d.pGenDG ?? 0) !== 0).append('g').attr('transform', 'translate(-15, 15)')
-      dgIndicator.append('circle').attr('r', 7.5).attr('fill', 'var(--color-method-ldf)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
-      dgIndicator.append('text').attr('text-anchor', 'middle').attr('dy', 3).attr('font-size', 6.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('DG')
+      const dgIndicator = sel.filter((d: Node) => (d.pGenDG ?? 0) !== 0).append('g').attr('transform', `translate(${-loadOffset}, ${loadOffset})`)
+      dgIndicator.append('circle').attr('r', isDense ? 4.5 : 7.5).attr('fill', 'var(--color-method-ldf)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
+      dgIndicator.append('text').attr('text-anchor', 'middle').attr('dy', isDense ? 2 : 3).attr('font-size', isDense ? 5 : 6.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('DG')
       dgIndicator.append('title').text('Distributed generation (sgen) — fixed PQ, not voltage-controlled')
 
-      sel
-        .append('text')
-        .attr('text-anchor', 'middle')
-        .attr('dy', 32)
-        .attr('font-size', 10)
-        .attr('fill', 'var(--color-foreground)')
-        .text((d: Node) => d.name)
+      // Tooltip for all nodes
+      sel.append('title').text((d: Node) => `${d.name || `Bus ${d.id}`} (${d.type.toUpperCase()})`)
 
-      drawMeasurementBadge(sel, 15, 17)
+      if (!isDense) {
+        sel
+          .append('text')
+          .attr('text-anchor', 'middle')
+          .attr('dy', 32)
+          .attr('font-size', 10)
+          .attr('fill', 'var(--color-foreground)')
+          .text((d: Node) => d.name)
+      }
+
+      drawMeasurementBadge(sel, isDense ? 8 : 15, isDense ? 9 : 17)
       attachMeasurementClick(sel)
 
       const position = () => sel.attr('transform', (d) => `translate(${d.x},${d.y})`)
@@ -886,89 +894,56 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     }
 
     if (viewMode === 'spatial') {
-      const hasGeoCoords = topology.buses.some((bus) => bus.geoX !== undefined && bus.geoY !== undefined)
-      const radialPositions = hasGeoCoords ? null : computeRadialLayout(topology, width, height)
+      const spatialLayout = computeSpatialLayout(
+        topology,
+        width,
+        height,
+        positionsRef.current,
+        useForceLayout
+      )
+      const hasGeoCoords = topology.buses.some(
+        (bus) =>
+          bus.geoX !== undefined &&
+          bus.geoY !== undefined &&
+          (Math.abs(bus.geoX) > 1e-4 || Math.abs(bus.geoY) > 1e-4)
+      )
 
-      // Hoisted out of the per-bus loop below: recomputing the filter and both
-      // maxima inside it made building the node array O(buses^2), and the
-      // spread form (Math.max(...arr)) also blows the argument limit on a
-      // large enough case.
-      let maxGeoX = 0
-      let maxGeoY = 0
-      for (const b of topology.buses) {
-        if (b.geoX !== undefined && b.geoX > maxGeoX) maxGeoX = b.geoX
-        if (b.geoY !== undefined && b.geoY > maxGeoY) maxGeoY = b.geoY
-      }
-      const geoSpanX = maxGeoX || 1
-      const geoSpanY = maxGeoY || 1
-
-      const nodes: Node[] = topology.buses.map((bus) => {
-        const node: Node = {
-          id: bus.id,
-          name: bus.name,
-          type: bus.type,
-          pGen: bus.pGen,
-          qGen: bus.qGen,
-          pLoad: bus.pLoad,
-          qLoad: bus.qLoad,
-          measurementKind: measurementIndex.busKind.get(bus.id),
-        }
-        if (hasGeoCoords && bus.geoX !== undefined && bus.geoY !== undefined) {
-          const padding = 50
-          node.x = (bus.geoX / geoSpanX) * (width - 2 * padding) + padding
-          node.y = (bus.geoY / geoSpanY) * (height - 2 * padding) + padding
-          node.fx = node.x
-          node.fy = node.y
-        } else {
-          // Resume from where this bus last settled, else the concentric
-          // layout — otherwise a meter toggle or any other redraw makes every
-          // node jump. With the Force toggle off these positions are the
-          // final layout, not a starting point.
-          const prevPos = positionsRef.current.get(bus.id) ?? radialPositions?.get(bus.id)
-          if (prevPos) {
-            node.x = prevPos.x
-            node.y = prevPos.y
-          }
-        }
-        return node
-      })
+      const nodes: Node[] = spatialLayout.nodes.map((n) => ({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        pGen: n.pGen,
+        qGen: n.qGen,
+        pLoad: n.pLoad,
+        qLoad: n.qLoad,
+        pGenDG: n.pGenDG,
+        measurementKind: n.measurementKind,
+        x: n.x,
+        y: n.y,
+        fx: n.fx,
+        fy: n.fy,
+      }))
       const nodeById = new Map(nodes.map((n) => [n.id, n]))
 
-      const links: Link[] = topology.lines.map((line) => ({
+      const links: Link[] = spatialLayout.links.map((line) => ({
         id: line.id,
         from: line.from,
         to: line.to,
-        lineMeasurementKind: measurementIndex.lineKind.get(line.id),
+        lineMeasurementKind: line.lineMeasurementKind,
       }))
 
-      const simLinks = links.map((l) => ({ ...l, source: l.from, target: l.to }))
-      const simulation = hasGeoCoords
-        ? d3
-            .forceSimulation(nodes)
-            .force('link', d3.forceLink(simLinks as any).id((d: any) => d.id).distance(150).strength(0.1))
-            .alphaDecay(0.1)
-        : d3
-            .forceSimulation(nodes)
-            .force('link', d3.forceLink(simLinks as any).id((d: any) => d.id).distance(110))
-            .force('charge', d3.forceManyBody().strength(-550))
-            .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collision', d3.forceCollide().radius(38))
-
-      // Settle the layout headless instead of animating it into place, and
-      // only when the Force toggle asks for it. Ticking on a timer meant
-      // rewriting the position of every node, link, hit area, badge and switch
-      // glyph once per frame for several seconds; watching a layout converge
-      // was never information. The tick handler wired up further down still
-      // runs for interactive drags, which do want live feedback.
-      simulation.stop()
-      if (!hasGeoCoords && useForceLayout) {
-        // With fixed geo coordinates every node is pinned via fx/fy, so the
-        // forces have nothing to solve and ticking is pure cost.
-        const decayTicks = Math.ceil(
-          Math.log(simulation.alphaMin()) / Math.log(1 - simulation.alphaDecay())
-        )
-        simulation.tick(nodes.length > 600 ? 200 : decayTicks)
+      for (const n of nodes) {
+        if (n.x != null && n.y != null) {
+          positionsRef.current.set(n.id, { x: n.x, y: n.y })
+        }
       }
+
+      const simLinks = links.map((l) => ({ ...l, source: l.from, target: l.to }))
+      const simulation = d3
+        .forceSimulation(nodes)
+        .force('link', d3.forceLink(simLinks as any).id((d: any) => d.id).distance(110))
+
+      simulation.stop()
 
       // Out-of-service lines/transformers (tie-switches, backup) — drawn dashed,
       // never fed into the force simulation or the power-flow model. See
