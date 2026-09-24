@@ -598,6 +598,9 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
     # 1. Classificar e criar barras com nível de tensão MT (20 kV) ou BT (0.4 kV)
     for b in data.get("buses", []):
         bid = str(b["id"])
+        coords = b.get("geometry", {}).get("coordinates", [0, 0])
+        raw_vn = b.get("nominal_voltage", 20000.0)
+        vn_kv = raw_vn / 1000.0 if raw_vn > 100.0 else raw_vn
         pots = b.get("results", {}).get("potentials", [])
         if pots and isinstance(pots[0], (list, tuple)) and len(pots[0]) >= 2:
             v0 = pots[0]
@@ -613,7 +616,13 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
 
         idx = pp.create_bus(net, vn_kv=vn_kv, name=bid)
         bus_map[bid] = idx
+        if coords and len(coords) >= 2:
+            net.bus_geodata.loc[idx] = {"x": float(coords[0]), "y": float(coords[1])}
         geom = b.get("geometry")
+        if geom and "coordinates" in geom and geom["coordinates"] != [0, 0]:
+            coords = geom["coordinates"]
+            if len(coords) >= 2 and (coords[0] != 0 or coords[1] != 0):
+                net.bus_geodata.loc[idx] = {"x": float(coords[0]), "y": float(coords[1])}
         if geom and "coordinates" in geom:
             c_coords = geom["coordinates"]
             if isinstance(c_coords, (list, tuple)) and len(c_coords) >= 2:
@@ -700,6 +709,8 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
             pp.create_switch(
                 net,
                 bus=bus_map[b1],
+                element=bus_map[b2],
+                et="b",
                 element=l_idx,
                 et="l",
                 closed=bool(br.get("closed", True)),
