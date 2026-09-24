@@ -1019,6 +1019,51 @@ export const HELP_CATEGORIES: HelpCategory[] = [
   },
 
   // ── 7. Data Generation ─────────────────────────────────────────────────────
+  // ── 7. Topologies & Formats ────────────────────────────────────────────────
+  {
+    id: 'topologies-io',
+    label: 'Topologies & Formats',
+    icon: 'Path',
+    description: 'Network ingestion, export, open power system standards, and GIS integration.',
+    topics: [
+      {
+        id: 'topology-import-export',
+        title: 'Topology Import & Export (Open Standards & GIS)',
+        tagline: 'Universal network I/O across pandapower, OpenDSS, MATPOWER, CIM, GeoJSON, and CSV.',
+        paradigm: 'both',
+        description: [
+          'The DSSE Workbench supports seamless import, editing, and export of electrical networks across 10 open and commercial formats. Rather than locking users into fixed built-in benchmarks, researchers can import custom utility feeders, modify parameters in real time, and export back to disk.',
+          'Format pivot architecture: all external formats are ingested through pandapowerNet as an intermediate pivot model. This normalises branch impedances, transformer short-circuit reactances, and bus injections into standard per-unit quantities (Sn = 1 MVA, Vn = 1 kV, Zbase = 1 Ω).',
+          'Supported import formats: pandapower JSON (.json), pandapower Excel (.xlsx), MATPOWER (.m, .mat), OpenDSS (.dss, .zip), CIM CGMES (IEC 61970/61968 .xml, .zip), UCTE DEF (.ucte), GeoJSON (.geojson), CSV decoupled tables (ZIP or single with buses.csv and lines.csv), GraphML (.graphml for GNN/AI pipelines), and Workbench native JSON.',
+          'Supported export formats: Workbench JSON (preserves meters and switch states), pandapower JSON, Excel (.xlsx), CSV table archive (.zip), and GraphML.',
+          'GIS & Geographic Coordinates: when importing from GeoJSON, OpenDSS (BusCoords), pandapower (bus_geodata), or CSV (x_coord, y_coord), spatial coordinates (lon/lat WGS84 or projected plane) are extracted into geoX/geoY. The D3 Network Diagram prioritises these physical coordinates over graph-force layouts.',
+          'Non-blocking validation: upon ingestion, an AC power flow is executed in the background. If parameters fail to converge, a non-blocking warning is displayed, allowing the engineer to inspect and correct parameters in the table instead of aborting the import.',
+          'Scalability handling: networks with 500–2,000 buses show an operational notice; for networks exceeding 2,000 buses, graphical diagram rendering is automatically deferred to maintain optimal UI responsiveness.',
+        ],
+        table: {
+          headers: ['Format', 'Extension', 'Type / Standard', 'Phases', 'Geo Coordinates'],
+          rows: [
+            ['pandapower JSON', '.json', 'Native tabular serialization', '1φ eq.', 'Yes (bus_geodata)'],
+            ['OpenDSS', '.dss, .zip', 'EPRI declarative script', '3φ / 1φ eq.', 'Yes (BusCoords)'],
+            ['MATPOWER', '.m, .mat', 'PSERC / Cornell matrices', '1φ eq.', 'No'],
+            ['CIM CGMES', '.xml, .zip', 'IEC 61970 / IEC 61968 RDF/XML', 'Total (T&D)', 'Yes (GL profile)'],
+            ['GeoJSON', '.geojson, .json', 'RFC 7946 geospatial features', 'Custom attributes', 'Yes (WGS84 lon/lat)'],
+            ['CSV decoupled', '.csv, .zip', 'Relational tables (buses, lines)', 'Flexible', 'Optional columns'],
+            ['GraphML', '.graphml', 'Attributed graph XML (GNNs)', 'Arbitrary', 'Attributes'],
+            ['Workbench JSON', '.json', 'Native app state + meters', '1φ eq.', 'Yes (geoX, geoY)'],
+          ],
+        },
+        relatedFunctions: [
+          'app.backend.services.topology_io.import_file()',
+          'app.backend.services.topology_io.export_topology()',
+          'app.backend.services.topology_io.ppnet_to_topology()',
+          'app.backend.routes.topology.import_topology()',
+        ],
+      },
+    ],
+  },
+
+  // ── 8. Data Generation ─────────────────────────────────────────────────────
   {
     id: 'data-generation',
     label: 'Data Generation',

@@ -1021,3 +1021,45 @@ dar um caminho de volta.
    - Preload e `electron.ts` expõem `getVersion()` e `checkForUpdates()`.
    - As releases são publicadas e consultadas em `luisfboff1/dsse-workbench-releases`, viabilizando downloads públicos para todos os usuários sem exigir token.
 
+
+## 2026-09-21 — Seletor de rede ficava em branco depois de carregar um caso pandapower
+
+### O que estava acontecendo
+
+Na aba Topology, depois de escolher qualquer caso do catálogo pandapower
+(`case33bw`, `mv_oberrhein`...), o seletor "Load template..." voltava **vazio**,
+como se nenhuma rede estivesse carregada. Visto ao tirar o print da lista de
+redes para o slide 1 do pitch RTE.
+
+Causa: dois formatos de id para a mesma coisa. O backend devolve a topologia
+com `id = "pp_<caso>"` (`app/backend/routes/topology.py`), e `App.tsx` e o
+próprio `TopologyTab.tsx` (recarga de caso) já usavam `pp_`. Só os itens da
+lista usavam `value={`pp:${c.name}`}`. O `<Select value={topology.id}>` nunca
+achava um item com `pp_case33bw`, e o Radix mostra o gatilho vazio quando o
+valor não bate com nenhum item.
+
+### O que mudou
+
+- `TopologyTab.tsx`: os itens do catálogo usam `pp_${c.name}` e o
+  `loadTemplate` testa `pp_`. Um formato só, o do backend.
+
+### Regra que fica
+
+- **Id de caso pandapower é sempre `pp_<caso>`**, no backend, no estado e no
+  `value` de qualquer lista. Nada de um segundo separador na UI.
+
+
+## 2026-09-23 — Importação e exportação de topologias (ImportTopologyDialog e ExportTopologyDropdown)
+
+### O que mudou
+
+1. **Toolbar da aba Topology (`TopologyTab.tsx`):**
+   - Inseridos botões dedicados de **Import** (`<Upload>`) e **Export** (`<ExportTopologyDropdown>`) diretamente ao lado do seletor de casos/templates, mantendo a densidade e o padrão visual dos botões compactos do app (`h-10 px-3`).
+2. **Modal de Importação (`ImportTopologyDialog.tsx`):**
+   - Suporte a drag-and-drop de arquivos ou seleção manual via explorador do sistema operacional.
+   - Suporte a múltiplos arquivos para formatos desacoplados (CSV com `buses.csv` e `lines.csv`, ou OpenDSS com scripts auxiliares), além de aceitar pacotes `.zip`.
+   - Ação direta para download do modelo padronizado CSV (`downloadCsvTemplate`).
+   - Notificações não-bloqueantes (`toast.warning`, `toast.info`) para alertas de divergência inicial de fluxo de carga ou redes extensas (> 500 barras).
+3. **Dropdown de Exportação (`ExportTopologyDropdown.tsx`):**
+   - Menu suspenso com download de um clique gerando downloads dinâmicos de Blob para Workbench JSON, pandapower JSON, Excel (.xlsx), CSV (.zip) e GraphML.
+

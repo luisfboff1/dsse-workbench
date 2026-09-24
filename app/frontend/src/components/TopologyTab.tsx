@@ -7,10 +7,12 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableCard } from '@/components/TableCard'
-import { Network, Plus, Trash, CircleNotch } from '@phosphor-icons/react'
+import { Network, Plus, Trash, CircleNotch, Upload, Export } from '@phosphor-icons/react'
 import type { Topology, Bus, Line, MeasurementKind, OpenSwitch } from '@/lib/types'
 import { DEFAULT_TOPOLOGIES } from '@/lib/topologies'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
+import { ImportTopologyDialog } from './ImportTopologyDialog'
+import { ExportTopologyDropdown } from './ExportTopologyDropdown'
 import { toast } from 'sonner'
 import { getPandapowerCases, loadPandapowerCase, type PandapowerCaseInfo, type PandapowerVoltageClass } from '@/lib/api'
 import { checkRadial, getTopologySwitches } from '@/lib/networkTopology'
@@ -64,6 +66,12 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
   // away instead of cluttering the default list (25 of 60 cases are LV).
   const [ppVoltageClass, setPpVoltageClass] = useState<PandapowerVoltageClass>('distribution')
   const [hoveredLineId, setHoveredLineId] = useState<number | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+
+  const handleImport = useCallback((imported: Topology) => {
+    onTopologyChange(ensureMeasurements(imported))
+    toast.success(`Imported: ${imported.name} (${imported.buses.length} buses, ${imported.lines.length} lines)`)
+  }, [onTopologyChange])
 
   // TableCard's Copy normally reads the rendered cells back out of the DOM,
   // which is what keeps an export matching what's on screen. With windowed
@@ -133,7 +141,10 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
   }, [loadCaseList])
 
   const loadTemplate = (value: string) => {
-    if (value.startsWith('pp:')) {
+    // Same `pp_<case>` id the backend gives the loaded topology: with the old
+    // `pp:` item value the Select never matched topology.id, so the trigger
+    // went blank after loading any pandapower case.
+    if (value.startsWith('pp_')) {
       const caseName = value.slice(3)
       setPpLoading(true)
       loadPandapowerCase(caseName)
@@ -414,17 +425,23 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
                   )
                 })}
               </div>
-              <Select value={topology.id} onValueChange={loadTemplate}>
-                <SelectTrigger className="w-full sm:w-65" disabled={ppListLoading || ppLoading}>
-                  {ppLoading
-                    ? <span className="flex items-center gap-1.5 text-muted-foreground"><CircleNotch className="animate-spin w-3 h-3" />Loading case…</span>
-                    : ppListLoading
-                      ? <span className="flex items-center gap-1.5 text-muted-foreground"><CircleNotch className="animate-spin w-3 h-3" />Loading list…</span>
-                      : <SelectValue placeholder="Load template..." />}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel>Custom Templates</SelectLabel>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => setImportOpen(true)} title="Import Topology" className="h-10 px-3">
+                  <Upload size={16} className="sm:mr-2" />
+                  <span className="hidden sm:inline">Import</span>
+                </Button>
+                <ExportTopologyDropdown topology={topology} />
+                <Select value={topology.id} onValueChange={loadTemplate}>
+                  <SelectTrigger className="w-full sm:w-65 h-10" disabled={ppListLoading || ppLoading}>
+                    {ppLoading
+                      ? <span className="flex items-center gap-1.5 text-muted-foreground"><CircleNotch className="animate-spin w-3 h-3" />Loading case…</span>
+                      : ppListLoading
+                        ? <span className="flex items-center gap-1.5 text-muted-foreground"><CircleNotch className="animate-spin w-3 h-3" />Loading list…</span>
+                        : <SelectValue placeholder="Load template..." />}
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectLabel>Custom Templates</SelectLabel>
                     {DEFAULT_TOPOLOGIES.map((topo) => (
                       <SelectItem key={topo.id} value={topo.id}>
                         {topo.name}
@@ -437,7 +454,7 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
                       <SelectGroup>
                         <SelectLabel>pandapower · {VOLTAGE_CLASS_LABEL[ppVoltageClass]}</SelectLabel>
                         {ppCases.filter((c) => c.voltageClass === ppVoltageClass).map((c) => (
-                          <SelectItem key={c.name} value={`pp:${c.name}`}>
+                          <SelectItem key={c.name} value={`pp_${c.name}`}>
                             <span className="font-mono">{c.name}</span>
                             <span className="ml-2 text-muted-foreground text-[10px]">
                               {c.buses != null
@@ -450,7 +467,8 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
                   </>
                 )}
               </SelectContent>
-            </Select>
+                </Select>
+              </div>
             {ppListError && (
               <div className="flex items-center justify-end gap-2 text-xs text-destructive">
                 <span className="truncate" title={ppListError}>
@@ -736,6 +754,8 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
           </CardContent>
         </Card>
       </div>
+      <ImportTopologyDialog open={importOpen} onOpenChange={setImportOpen} onImport={handleImport} />
     </div>
   )
 }
+

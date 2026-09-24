@@ -78,8 +78,10 @@ def build_net_from_frontend(topology: dict[str, Any]) -> tuple[Any, dict[int, in
             )
 
     for line in lines:
-        from_pp = bus_id_map[line["from_bus"]]
-        to_pp = bus_id_map[line["to_bus"]]
+        from_id = line.get("from_bus", line.get("from"))
+        to_id = line.get("to_bus", line.get("to"))
+        from_pp = bus_id_map[from_id]
+        to_pp = bus_id_map[to_id]
         r_pu = float(line["resistance"])
         x_pu = float(line["reactance"])
         # Inverse of load_pandapower_case()'s b_pu = c_nf*1e-9*2*pi*f*z_base

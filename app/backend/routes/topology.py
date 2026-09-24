@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import inspect
-
-import numpy as np
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
@@ -521,16 +519,6 @@ def list_topologies() -> list[dict]:
     ]
 
 
-@router.get("/{topology_id}")
-def get_topology(topology_id: str) -> dict:
-    """Retorna topologia completa por ID."""
-    if topology_id not in TOPOLOGY_MAP:
-        raise HTTPException(
-            status_code=404, detail=f"Topology '{topology_id}' not found."
-        )
-    return TOPOLOGY_MAP[topology_id]
-
-
 # ─── Pandapower built-in cases ────────────────────────────────────────────────
 
 # Named (non-"case*") network generators in pandapower.networks that take no
@@ -653,13 +641,9 @@ def list_pandapower_cases() -> list[dict]:
 
 @router.get("/pandapower/{case_name}")
 def load_pandapower_case(case_name: str) -> dict:
-    """
-    Carrega um caso pandapower e converte para o formato Topology do frontend.
-
-    Valores em per-unit no base do próprio caso (sn_mva, vn_kv da barra).
-    Transformadores são incluídos como linhas (reatância de curto-circuito pu).
-    """
+    """Carrega um caso pandapower e converte para o formato Topology do frontend."""
     import pandapower.networks as pn
+    from app.backend.services.topology_io import ppnet_to_topology
 
     if case_name not in _pp_case_names():
         raise HTTPException(
@@ -668,370 +652,78 @@ def load_pandapower_case(case_name: str) -> dict:
         )
 
     net = getattr(pn, case_name)()
-    sn_mva = float(net.sn_mva)
-    freq_hz = float(getattr(net, "f_hz", 50.0))
-
-    # Filtra elementos out-of-service em todas as tabelas (backup/tie-switches
-    # abertas, equipamento reserva). pandapower mantém essas linhas no
-    # DataFrame mesmo desligadas — ex. case33bw tem 5 de 37 linhas com
-    # in_service=False (as chaves de interligação do alimentador radial
-    # reconfigurável); incluí-las faria a rede parecer malhada quando na
-    # operação normal ela é radial.
-    bus_df = (
-        net.bus[net.bus["in_service"]] if "in_service" in net.bus.columns else net.bus
-    )
-    line_df = (
-        net.line[net.line["in_service"]]
-        if "in_service" in net.line.columns
-        else net.line
-    )
-    load_df = (
-        net.load[net.load["in_service"]]
-        if "in_service" in net.load.columns
-        else net.load
-    )
-    gen_df = (
-        net.gen[net.gen["in_service"]] if "in_service" in net.gen.columns else net.gen
-    )
-    ext_grid_df = (
-        net.ext_grid[net.ext_grid["in_service"]]
-        if "in_service" in net.ext_grid.columns
-        else net.ext_grid
-    )
-    trafo_df = (
-        net.trafo[net.trafo["in_service"]]
-        if "in_service" in net.trafo.columns
-        else net.trafo
-    )
-    sgen_df = (
-        net.sgen[net.sgen["in_service"]]
-        if "in_service" in net.sgen.columns
-        else net.sgen
+    return ppnet_to_topology(
+        net, source_id=f"pp_{case_name}", source_name=f"pandapower · {case_name}"
     )
 
-    # Segunda forma de "desligado" no pandapower: uma chave em net.switch com
-    # closed=False, presa a UM lado de uma linha/trafo específica (não à linha
-    # inteira via in_service). É assim que redes MT reais representam pontos
-    # normalmente abertos — ex. create_cigre_network_mv, mv_oberrhein e
-    # simple_mv_open_ring_net não usam in_service=False em nada, usam isso.
-    # Sem tratar isso, essas redes MT genuinamente radiais apareciam como
-    # malhadas.
-    line_switch_open: set[int] = set()
-    trafo_switch_open: set[int] = set()
-    switch_df = getattr(net, "switch", None)
-    if switch_df is not None and len(switch_df) > 0 and "closed" in switch_df.columns:
-        open_sw = switch_df[~switch_df["closed"]]
-        line_switch_open = set(
-            int(e) for e in open_sw.loc[open_sw["et"] == "l", "element"]
-        )
-        trafo_switch_open = set(
-            int(e) for e in open_sw.loc[open_sw["et"] == "t", "element"]
-        )
-        # et == 'b' (chave bus-bus) ainda não é suportado — ver DESIGN_SYSTEM.md.
 
-    if line_switch_open:
-        line_df = line_df[~line_df.index.isin(line_switch_open)]
-    if trafo_switch_open:
-        trafo_df = trafo_df[~trafo_df.index.isin(trafo_switch_open)]
+from fastapi import UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+import io
 
-    kept_bus_idx = set(int(b) for b in bus_df.index)
 
-    # --- Classificação de barras ---
-    slack_buses = set(int(b) for b in ext_grid_df["bus"]) & kept_bus_idx
-    gen_buses = (
-        (set(int(b) for b in gen_df["bus"]) & kept_bus_idx)
-        if len(gen_df) > 0
-        else set()
+@router.get("/import/formats")
+def list_import_formats():
+    from app.backend.services.topology_io import get_import_formats
+
+    return get_import_formats()
+
+
+@router.get("/export/formats")
+def list_export_formats():
+    from app.backend.services.topology_io import get_export_formats
+
+    return get_export_formats()
+
+
+@router.get("/import/csv-template")
+def download_csv_template():
+    from app.backend.services.topology_io import get_csv_template
+
+    file_bytes, filename, content_type = get_csv_template()
+    return StreamingResponse(
+        io.BytesIO(file_bytes),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
-    # Cargas agregadas por barra (convertidas para pu)
-    load_p: dict[int, float] = {}
-    load_q: dict[int, float] = {}
-    for _, row in load_df.iterrows():
-        b = int(row.bus)
-        if b not in kept_bus_idx:
-            continue
-        load_p[b] = load_p.get(b, 0.0) + float(row.p_mw) / sn_mva
-        load_q[b] = load_q.get(b, 0.0) + float(row.q_mvar) / sn_mva
 
-    # sgen agregado por barra — geração distribuída/renovável: PQ fixo, NÃO
-    # controla tensão (ao contrário de `gen`, por isso fica separado de
-    # gen_p/gen_vm e nunca vira barra "pv"). Campo próprio (pGenDG/qGenDG)
-    # em vez de somar em pGen ou virar carga negativa, pra ficar visível na
-    # legenda da Topology em vez de desaparecer dentro de outro número.
-    dg_p: dict[int, float] = {}
-    dg_q: dict[int, float] = {}
-    for _, row in sgen_df.iterrows():
-        b = int(row.bus)
-        if b not in kept_bus_idx:
-            continue
-        dg_p[b] = dg_p.get(b, 0.0) + float(row.p_mw) / sn_mva
-        dg_q[b] = dg_q.get(b, 0.0) + float(row.q_mvar) / sn_mva
+@router.post("/import")
+async def import_topology(
+    file: UploadFile = File(...),
+    format: str = Form(None),
+    extra_files: list[UploadFile] = File(default=[]),
+):
+    """Importa topologia de arquivo externo."""
+    from app.backend.services.topology_io import import_file
 
-    # Geração por barra
-    gen_p: dict[int, float] = {}
-    gen_vm: dict[int, float] = {}
-    for _, row in gen_df.iterrows():
-        b = int(row.bus)
-        if b not in kept_bus_idx:
-            continue
-        gen_p[b] = gen_p.get(b, 0.0) + float(row.p_mw) / sn_mva
-        gen_vm[b] = float(row.vm_pu)
+    file_bytes = await file.read()
+    extra_files_dict = {}
+    for ef in extra_files:
+        extra_files_dict[ef.filename] = await ef.read()
 
-    # --- Barras ---
-    pp_idx_to_id: dict[int, int] = {}
-    buses_out = []
-    for seq_id, pp_idx in enumerate(bus_df.index, start=1):
-        pp_idx_to_id[int(pp_idx)] = seq_id
-        b = int(pp_idx)
+    return import_file(file_bytes, file.filename, extra_files_dict)
 
-        if b in slack_buses:
-            bus_type = "slack"
-            eg = net.ext_grid[net.ext_grid.bus == b].iloc[0]
-            vm = float(eg.vm_pu)
-            va = 0.0
-        elif b in gen_buses:
-            bus_type = "pv"
-            vm = gen_vm.get(b, 1.0)
-            va = 0.0
-        else:
-            bus_type = "pq"
-            # V/θ de um barramento PQ são incógnitas do power flow, não entrada —
-            # flat start (1 pu, 0°); ver isBusFieldEditable() no frontend.
-            vm = 1.0
-            va = 0.0
 
-        buses_out.append(
-            {
-                "id": seq_id,
-                "name": str(net.bus.at[pp_idx, "name"] or f"Bus {pp_idx}"),
-                "type": bus_type,
-                "voltage": round(vm, 5),
-                "angle": round(va, 4),
-                "pGen": round(gen_p.get(b, 0.0), 5),
-                "qGen": 0.0,
-                "pLoad": round(load_p.get(b, 0.0), 5),
-                "qLoad": round(load_q.get(b, 0.0), 5),
-                "pGenDG": round(dg_p.get(b, 0.0), 5),
-                "qGenDG": round(dg_q.get(b, 0.0), 5),
-            }
+@router.post("/export/{format}")
+async def export_topology_endpoint(format: str, topology: dict):
+    """Exporta topologia para arquivo."""
+    from app.backend.services.topology_io import export_topology
+
+    file_bytes, filename, content_type = export_topology(topology, format)
+
+    return StreamingResponse(
+        io.BytesIO(file_bytes),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{topology_id}")
+def get_topology(topology_id: str) -> dict:
+    """Retorna topologia completa por ID (deve ficar no final para não interceptar rotas estáticas)."""
+    if topology_id not in TOPOLOGY_MAP:
+        raise HTTPException(
+            status_code=404, detail=f"Topology '{topology_id}' not found."
         )
-
-    # --- Linhas ---
-    lines_out = []
-    seq = 1
-    for _, row in line_df.iterrows():
-        fb = int(row.from_bus)
-        tb = int(row.to_bus)
-        if fb not in kept_bus_idx or tb not in kept_bus_idx:
-            continue
-        vn_kv = float(net.bus.at[fb, "vn_kv"])
-        z_base = vn_kv**2 / sn_mva  # ohms
-        r_pu = float(row.r_ohm_per_km) * float(row.length_km) / z_base
-        x_pu = float(row.x_ohm_per_km) * float(row.length_km) / z_base
-        c_nf = float(row.c_nf_per_km) * float(row.length_km)
-        # net.f_hz, not hardcoded 50 — case5 (PJM) is 60 Hz. Getting this
-        # wrong doesn't break DC/P-balance at all (only shows up as Q_inj/
-        # Q_branch being off by a few percent on an AC solve), so it's easy
-        # to miss — found by comparing this app's AC ground truth against
-        # 5_BUS_IEEE_bad_data_analytics.ipynb's pn.case5() solved directly.
-        b_pu = c_nf * 1e-9 * 2 * np.pi * freq_hz * z_base
-        lines_out.append(
-            {
-                "id": seq,
-                "from": pp_idx_to_id[fb],
-                "to": pp_idx_to_id[tb],
-                "resistance": round(r_pu, 7),
-                "reactance": round(max(x_pu, 1e-7), 7),
-                "susceptance": round(b_pu, 7),
-            }
-        )
-        seq += 1
-
-    # --- Transformadores como linhas (reatância de curto-circuito) ---
-    for _, row in trafo_df.iterrows():
-        hv = int(row.hv_bus)
-        lv = int(row.lv_bus)
-        if hv not in kept_bus_idx or lv not in kept_bus_idx:
-            continue
-        sn_t = float(row.sn_mva)
-        vk = float(row.vk_percent) / 100.0
-        vkr = (
-            float(row.get("vkr_percent", 0.0)) / 100.0
-            if "vkr_percent" in row.index
-            else 0.0
-        )
-        z_pu = vk * sn_mva / sn_t
-        r_pu = vkr * sn_mva / sn_t
-        x_pu = float(np.sqrt(max(z_pu**2 - r_pu**2, 0.0)))
-        lines_out.append(
-            {
-                "id": seq,
-                "from": pp_idx_to_id[hv],
-                "to": pp_idx_to_id[lv],
-                "resistance": round(r_pu, 7),
-                "reactance": round(max(x_pu, 1e-6), 7),
-                "susceptance": 0.0,
-            }
-        )
-        seq += 1
-
-    # --- Todos os switches (normalmente abertos E fechados) ---
-    # Exportamos TODOS os switches:
-    # 1. Switches explícitos de net.switch (com estado closed real de net.switch).
-    # 2. Todas as demais linhas e trafos da rede não cobertos por net.switch
-    #    (com closed=True se in_service, ou closed=False se tie-lines/out-of-service).
-    # Isso permite reconfiguração completa de alimentadores (ex: case33bw, IEEE 33-bus)
-    # onde o usuário fecha uma tie-line e abre qualquer um dos ramos fechados para
-    # manter a rede radial.
-    line_param: dict[int, dict] = {}
-    for _, row in net.line.iterrows():
-        fb = int(row.from_bus)
-        tb = int(row.to_bus)
-        if fb not in kept_bus_idx or tb not in kept_bus_idx:
-            continue
-        vn_kv = float(net.bus.at[fb, "vn_kv"])
-        z_base = vn_kv**2 / sn_mva
-        r = float(row.r_ohm_per_km) * float(row.length_km) / z_base
-        x = float(row.x_ohm_per_km) * float(row.length_km) / z_base
-        c_nf = float(row.c_nf_per_km) * float(row.length_km)
-        b = c_nf * 1e-9 * 2 * np.pi * freq_hz * z_base
-        line_param[int(row.name)] = {
-            "r_pu": round(r, 7),
-            "x_pu": round(max(x, 1e-7), 7),
-            "b_pu": round(b, 7),
-        }
-
-    trafo_param: dict[int, dict] = {}
-    for _, row in net.trafo.iterrows():
-        hv = int(row.hv_bus)
-        lv = int(row.lv_bus)
-        if hv not in kept_bus_idx or lv not in kept_bus_idx:
-            continue
-        sn_t = float(row.sn_mva)
-        vk = float(row.vk_percent) / 100.0
-        vkr = (
-            float(row.get("vkr_percent", 0.0)) / 100.0
-            if "vkr_percent" in row.index
-            else 0.0
-        )
-        z_pu = vk * sn_mva / sn_t
-        r_pu = vkr * sn_mva / sn_t
-        x_pu = float(np.sqrt(max(z_pu**2 - r_pu**2, 0.0)))
-        trafo_param[int(row.name)] = {
-            "r_pu": round(r_pu, 7),
-            "x_pu": round(max(x_pu, 1e-6), 7),
-            "b_pu": 0.0,
-        }
-
-    all_switches: list[dict] = []
-    sw_seq = 1
-    covered_lines: set[int] = set()
-    covered_trafos: set[int] = set()
-
-    if switch_df is not None and len(switch_df) > 0:
-        for sw_idx, sw_row in switch_df.iterrows():
-            et = str(sw_row.get("et", ""))
-            if et not in ("l", "t"):
-                continue
-            elem = int(sw_row["element"])
-            closed = bool(sw_row["closed"])
-
-            if et == "l":
-                if elem not in net.line.index:
-                    continue
-                line_row = net.line.loc[elem]
-                fb = int(line_row.from_bus)
-                tb = int(line_row.to_bus)
-                params = line_param.get(elem, {})
-                covered_lines.add(elem)
-            else:  # 't'
-                if elem not in net.trafo.index:
-                    continue
-                tr_row = net.trafo.loc[elem]
-                fb = int(tr_row.hv_bus)
-                tb = int(tr_row.lv_bus)
-                params = trafo_param.get(elem, {})
-                covered_trafos.add(elem)
-
-            if fb not in kept_bus_idx or tb not in kept_bus_idx:
-                continue
-
-            entry: dict = {
-                "id": sw_seq,
-                "from": pp_idx_to_id[fb],
-                "to": pp_idx_to_id[tb],
-                "name": str(sw_row.get("name") or f"SW {sw_seq}"),
-                "closed": closed,
-            }
-            entry.update(params)
-            all_switches.append(entry)
-            sw_seq += 1
-
-    # Demais linhas não presentes em net.switch (chaves seccionadoras / tie-lines)
-    for elem, row in net.line.iterrows():
-        elem_int = int(elem)
-        if elem_int in covered_lines:
-            continue
-        fb = int(row.from_bus)
-        tb = int(row.to_bus)
-        if fb not in kept_bus_idx or tb not in kept_bus_idx:
-            continue
-        in_svc = bool(row.in_service) if "in_service" in row else True
-        if elem_int in line_switch_open:
-            in_svc = False
-        name = str(row.get("name") or f"L{pp_idx_to_id[fb]}↔{pp_idx_to_id[tb]}")
-        all_switches.append(
-            {
-                "id": sw_seq,
-                "from": pp_idx_to_id[fb],
-                "to": pp_idx_to_id[tb],
-                "name": name,
-                "closed": in_svc,
-                **line_param.get(elem_int, {}),
-            }
-        )
-        sw_seq += 1
-
-    # Demais trafos não presentes em net.switch
-    for elem, row in net.trafo.iterrows():
-        elem_int = int(elem)
-        if elem_int in covered_trafos:
-            continue
-        hv = int(row.hv_bus)
-        lv = int(row.lv_bus)
-        if hv not in kept_bus_idx or lv not in kept_bus_idx:
-            continue
-        in_svc = bool(row.in_service) if "in_service" in row else True
-        if elem_int in trafo_switch_open:
-            in_svc = False
-        name = str(row.get("name") or f"T{pp_idx_to_id[hv]}↔{pp_idx_to_id[lv]}")
-        all_switches.append(
-            {
-                "id": sw_seq,
-                "from": pp_idx_to_id[hv],
-                "to": pp_idx_to_id[lv],
-                "name": name,
-                "closed": in_svc,
-                **trafo_param.get(elem_int, {}),
-            }
-        )
-        sw_seq += 1
-
-    # Retrocompatibilidade: openSwitches (só os abertos)
-    open_switches_compat = [s for s in all_switches if not s["closed"]]
-
-    return {
-        "id": f"pp_{case_name}",
-        "name": f"pandapower · {case_name}  (base {sn_mva:.0f} MVA)",
-        "buses": buses_out,
-        "lines": lines_out,
-        "switches": all_switches,
-        "openSwitches": open_switches_compat,
-        "frequency_hz": freq_hz,
-        "meta": {
-            "source": "pandapower",
-            "case_name": case_name,
-            "sn_mva": sn_mva,
-        },
-    }
+    return TOPOLOGY_MAP[topology_id]

@@ -11,6 +11,7 @@
 
 fastapi
 uvicorn
+python-multipart
 
 # Motor de rede e fluxo de potencia
 pandapower
@@ -24,6 +25,8 @@ numpy
 scipy
 pandas
 networkx
+openpyxl
+xlsxwriter
 
 # Empacotador
 pyinstaller

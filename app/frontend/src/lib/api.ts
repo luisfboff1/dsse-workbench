@@ -730,3 +730,72 @@ export async function fetchPipelineTrace(runId: string, subject: string) {
     `/pipeline/run/${runId}/trace/${encodeURIComponent(subject)}`
   )
 }
+
+// ─── Topology Import/Export ──────────────────────────────────────────────────
+
+export interface ImportFormat {
+  id: string
+  name: string
+  extensions: string[]
+  description: string
+  multiFile?: boolean
+}
+
+export interface ExportFormat {
+  id: string
+  name: string
+  extension: string
+  description: string
+}
+
+export async function getImportFormats(): Promise<ImportFormat[]> {
+  return get<ImportFormat[]>('/topologies/import/formats')
+}
+
+export async function getExportFormats(): Promise<ExportFormat[]> {
+  return get<ExportFormat[]>('/topologies/export/formats')
+}
+
+export async function importTopology(
+  file: File,
+  extraFiles?: File[]
+): Promise<Topology & { meta?: { source: string; warnings?: string[]; size_warning?: string | null } }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (extraFiles) {
+    for (const ef of extraFiles) {
+      formData.append('extra_files', ef)
+    }
+  }
+  const res = await fetch(`${BASE}/topologies/import`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(err)
+  }
+  return res.json()
+}
+
+export async function exportTopology(
+  topology: Topology,
+  format: string
+): Promise<Blob> {
+  const res = await fetch(`${BASE}/topologies/export/${format}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(normalizeTopo(topology)),
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(err)
+  }
+  return res.blob()
+}
+
+export async function downloadCsvTemplate(): Promise<Blob> {
+  const res = await fetch(`${BASE}/topologies/import/csv-template`)
+  if (!res.ok) throw new Error('Failed to download CSV template')
+  return res.blob()
+}
