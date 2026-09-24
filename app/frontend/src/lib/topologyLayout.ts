@@ -126,7 +126,12 @@ export function computeSpatialLayout(
   useForce = false
 ): TopologyLayout {
   const measurementIndex = buildMeasurementIndex(topology)
-  const geoBuses = topology.buses.filter((b) => b.geoX !== undefined && b.geoY !== undefined)
+  const geoBuses = topology.buses.filter(
+    (b) =>
+      b.geoX !== undefined &&
+      b.geoY !== undefined &&
+      (Math.abs(b.geoX) > 1e-4 || Math.abs(b.geoY) > 1e-4)
+  )
   const hasGeoCoords = geoBuses.length > 0
 
   let minGeoX = Number.POSITIVE_INFINITY
@@ -145,11 +150,21 @@ export function computeSpatialLayout(
   const spanX = rawSpanX > 1e-7 ? rawSpanX : 1
   const spanY = rawSpanY > 1e-7 ? rawSpanY : 1
 
+  // Mercator aspect ratio correction: 1 deg lon is cos(lat) * 1 deg lat
+  const midLatRad = ((minGeoY + maxGeoY) / 2) * (Math.PI / 180)
+  const aspectCorrection =
+    Math.abs(minGeoY) < 90 && Math.abs(maxGeoY) < 90 && Math.abs(Math.cos(midLatRad)) > 0.1
+      ? Math.cos(midLatRad)
+      : 1.0
+
+  const physicalSpanX = spanX * aspectCorrection
+  const physicalSpanY = spanY
+
   const availW = Math.max(100, width - 2 * padding)
   const availH = Math.max(100, height - 2 * padding)
-  const scale = Math.min(availW / spanX, availH / spanY)
-  const offsetX = padding + (availW - spanX * scale) / 2
-  const offsetY = padding + (availH - spanY * scale) / 2
+  const scale = Math.min(availW / physicalSpanX, availH / physicalSpanY)
+  const offsetX = padding + (availW - physicalSpanX * scale) / 2
+  const offsetY = padding + (availH - physicalSpanY * scale) / 2
 
   // Computed up front so both the force path (as its starting positions) and
   // the default path (as the layout itself) can use it.
@@ -158,7 +173,7 @@ export function computeSpatialLayout(
   const nodes: LayoutNode[] = topology.buses.map((bus) => {
     const kind = measurementIndex.busKind.get(bus.id)
     if (hasGeoCoords && bus.geoX !== undefined && bus.geoY !== undefined) {
-      const x = offsetX + (bus.geoX - minGeoX) * scale
+      const x = offsetX + (bus.geoX - minGeoX) * aspectCorrection * scale
       // North-up: higher latitude (geoY) goes towards the top of the canvas (smaller Y)
       const y = offsetY + (maxGeoY - bus.geoY) * scale
       const node = toLayoutNode(bus, kind, x, y)

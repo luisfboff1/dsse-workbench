@@ -522,14 +522,16 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
                       <>
                         <SelectGroup>
                           <SelectLabel>Saved Custom Topologies ({savedTopologies.length})</SelectLabel>
-                          {savedTopologies.filter((st) => Boolean(st?.id)).map((st) => (
-                            <SelectItem key={st.id} value={st.id}>
-                              💾 {st.name || 'Custom Network'}
-                              <span className="ml-2 text-muted-foreground text-[10px]">
-                                {(st.buses?.length ?? 0)}b · {(st.lines?.length ?? 0)}L
-                              </span>
-                            </SelectItem>
-                          ))}
+                          {savedTopologies
+                            .filter((st) => Boolean(st?.id))
+                            .map((st) => (
+                              <SelectItem key={st.id} value={st.id}>
+                                💾 {st.name || 'Custom Network'}
+                                <span className="ml-2 text-muted-foreground text-[10px]">
+                                  {(st.buses?.length ?? 0)}b · {(st.lines?.length ?? 0)}L
+                                </span>
+                              </SelectItem>
+                            ))}
                         </SelectGroup>
                         <SelectSeparator />
                       </>
