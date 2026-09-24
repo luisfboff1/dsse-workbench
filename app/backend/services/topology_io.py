@@ -614,10 +614,11 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
         idx = pp.create_bus(net, vn_kv=vn_kv, name=bid)
         bus_map[bid] = idx
         geom = b.get("geometry")
-        if geom and "coordinates" in geom and geom["coordinates"] != [0, 0]:
-            coords = geom["coordinates"]
-            if len(coords) >= 2 and (coords[0] != 0 or coords[1] != 0):
-                net.bus_geodata.loc[idx] = {"x": float(coords[0]), "y": float(coords[1])}
+        if geom and "coordinates" in geom:
+            c_coords = geom["coordinates"]
+            if isinstance(c_coords, (list, tuple)) and len(c_coords) >= 2:
+                if float(c_coords[0]) != 0.0 or float(c_coords[1]) != 0.0:
+                    net.bus_geodata.loc[idx] = {"x": float(c_coords[0]), "y": float(c_coords[1])}
 
     # 2. Fonte / Nó Slack
     sources = data.get("sources", [])
@@ -629,6 +630,7 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
     if slack_bid and slack_bid in bus_map:
         pp.create_ext_grid(net, bus=bus_map[slack_bid], vm_pu=1.0)
 
+    params = {str(p["id"]): p for p in data.get("lines_params", [])}
     lines_params = {str(p["id"]): p for p in data.get("lines_params", [])}
     trafos_params = {str(p["id"]): p for p in data.get("transformers_params", [])}
 
@@ -663,6 +665,7 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
 
         if btype == "line":
             pid = str(br.get("params_id"))
+            p = params.get(pid, {})
             p = lines_params.get(pid, {})
             z = p.get("z_line", [[[0.2]], [[0.1]]])
             r = float(z[0][0][0]) if z else 0.2
@@ -716,6 +719,7 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
             pfe_kw = float(tp.get("p0", 200.0)) / 1000.0
             i0_pct = float(tp.get("i0", 0.02)) * 100.0
 
+    # Loads (somando potências de fases ativas e reativas)
             v1 = float(net.bus.at[bus_map[b1], "vn_kv"])
             v2 = float(net.bus.at[bus_map[b2], "vn_kv"])
             hv_b = bus_map[b1] if v1 >= v2 else bus_map[b2]

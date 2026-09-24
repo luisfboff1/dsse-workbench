@@ -68,7 +68,7 @@ export interface TopologyLayout {
  *  per-line glyphs, and the diagram defaults to the canvas renderer. Tuned
  *  so the standard IEEE test feeders (up to 123 buses) keep every bit of
  *  the detailed SVG rendering they have today. */
-export const LARGE_NETWORK_BUSES = 300
+export const LARGE_NETWORK_BUSES = 500
 
 function toLayoutNode(bus: Bus, kind: MeasurementKind | undefined, x: number, y: number): LayoutNode {
   return {
