@@ -7,12 +7,13 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableCard } from '@/components/TableCard'
-import { Network, Plus, Trash, CircleNotch, Upload, Export } from '@phosphor-icons/react'
+import { Network, Plus, Trash, CircleNotch, Upload, Export, FloppyDisk } from '@phosphor-icons/react'
 import type { Topology, Bus, Line, MeasurementKind, OpenSwitch } from '@/lib/types'
 import { DEFAULT_TOPOLOGIES } from '@/lib/topologies'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { ImportTopologyDialog } from './ImportTopologyDialog'
 import { ExportTopologyDropdown } from './ExportTopologyDropdown'
+import { SaveTopologyDialog } from './SaveTopologyDialog'
 import { toast } from 'sonner'
 import { getPandapowerCases, loadPandapowerCase, type PandapowerCaseInfo, type PandapowerVoltageClass } from '@/lib/api'
 import { checkRadial, getTopologySwitches } from '@/lib/networkTopology'
@@ -67,6 +68,45 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
   const [ppVoltageClass, setPpVoltageClass] = useState<PandapowerVoltageClass>('distribution')
   const [hoveredLineId, setHoveredLineId] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [savedTopologies, setSavedTopologies] = useState<Topology[]>(() => {
+    try {
+      const raw = localStorage.getItem('dsse_saved_topologies')
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  })
+
+  const handleSavedTopology = useCallback((saved: Topology) => {
+    setSavedTopologies((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
+    onTopologyChange(saved)
+  }, [onTopologyChange])
+
+  const handleQuickSave = useCallback(() => {
+    if (topology.id?.startsWith('custom_')) {
+      try {
+        const updated: Topology = {
+          ...topology,
+          meta: {
+            ...(topology.meta ?? {}),
+            savedAt: new Date().toISOString(),
+          },
+        }
+        const raw = localStorage.getItem('dsse_saved_topologies')
+        const existing: Topology[] = raw ? JSON.parse(raw) : []
+        const filtered = existing.filter((t) => t.id !== topology.id)
+        localStorage.setItem('dsse_saved_topologies', JSON.stringify([updated, ...filtered]))
+        setSavedTopologies([updated, ...filtered])
+        onTopologyChange(updated)
+        toast.success(`Topology "${topology.name}" updated!`)
+      } catch (err: any) {
+        toast.error(`Failed to update topology: ${err.message}`)
+      }
+    } else {
+      setSaveOpen(true)
+    }
+  }, [topology, onTopologyChange])
 
   const handleImport = useCallback((imported: Topology) => {
     onTopologyChange(ensureMeasurements(imported))
@@ -144,6 +184,17 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
     // Same `pp_<case>` id the backend gives the loaded topology: with the old
     // `pp:` item value the Select never matched topology.id, so the trigger
     // went blank after loading any pandapower case.
+    if (value === topology.id) return
+
+    // 1. Saved custom topologies
+    const saved = savedTopologies.find((t) => t.id === value)
+    if (saved) {
+      onTopologyChange(ensureMeasurements({ ...saved }))
+      toast.success(`Loaded saved topology: ${saved.name}`)
+      return
+    }
+
+    // 2. pandapower cases
     if (value.startsWith('pp_')) {
       const caseName = value.slice(3)
       setPpLoading(true)
@@ -153,6 +204,8 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
         .finally(() => setPpLoading(false))
       return
     }
+
+    // 3. Built-in default templates
     const template = DEFAULT_TOPOLOGIES.find((t) => t.id === value)
     if (template) onTopologyChange(ensureMeasurements({ ...template }))
   }
@@ -426,6 +479,17 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
                 })}
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleQuickSave}
+                  title={topology.id?.startsWith('custom_') ? 'Save changes to this topology' : 'Save as Custom Topology'}
+                  className="h-10 px-3"
+                >
+                  <FloppyDisk size={16} className="sm:mr-2" />
+                  <span className="hidden sm:inline">
+                    {topology.id?.startsWith('custom_') ? 'Save' : 'Save As…'}
+                  </span>
+                </Button>
                 <Button variant="outline" onClick={() => setImportOpen(true)} title="Import Topology" className="h-10 px-3">
                   <Upload size={16} className="sm:mr-2" />
                   <span className="hidden sm:inline">Import</span>
@@ -440,6 +504,37 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
                         : <SelectValue placeholder="Load template..." />}
                   </SelectTrigger>
                   <SelectContent>
+                    {!DEFAULT_TOPOLOGIES.some((t) => t.id === topology.id) &&
+                      !ppCases.some((c) => `pp_${c.name}` === topology.id) &&
+                      !savedTopologies.some((t) => t.id === topology.id) && (
+                        <>
+                          <SelectGroup>
+                            <SelectLabel>Active / Imported Network</SelectLabel>
+                            <SelectItem value={topology.id}>
+                              📁 {topology.name || 'Imported Network'}
+                            </SelectItem>
+                          </SelectGroup>
+                          <SelectSeparator />
+                        </>
+                    )}
+
+                    {savedTopologies.length > 0 && (
+                      <>
+                        <SelectGroup>
+                          <SelectLabel>Saved Custom Topologies ({savedTopologies.length})</SelectLabel>
+                          {savedTopologies.map((st) => (
+                            <SelectItem key={st.id} value={st.id}>
+                              💾 {st.name}
+                              <span className="ml-2 text-muted-foreground text-[10px]">
+                                {st.buses.length}b · {st.lines.length}L
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                        <SelectSeparator />
+                      </>
+                    )}
+
                     <SelectGroup>
                       <SelectLabel>Custom Templates</SelectLabel>
                     {DEFAULT_TOPOLOGIES.map((topo) => (
@@ -755,6 +850,7 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
         </Card>
       </div>
       <ImportTopologyDialog open={importOpen} onOpenChange={setImportOpen} onImport={handleImport} />
+      <SaveTopologyDialog open={saveOpen} onOpenChange={setSaveOpen} topology={topology} onSave={handleSavedTopology} />
     </div>
   )
 }

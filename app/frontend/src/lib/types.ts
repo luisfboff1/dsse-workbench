@@ -106,6 +106,9 @@ export interface Topology {
    *  back to a shunt capacitance correctly; the frontend just carries it
    *  through untouched. Defaults to 50 if omitted (backend TopologyInput). */
   frequency_hz?: number
+  meta?: Record<string, any>
+  warnings?: string[]
+  size_warning?: string | null
 }
 
 export type PowerFlowMethod = 'pandapower-ac' | 'pandapower-dc' | 'lindistflow'
