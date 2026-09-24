@@ -709,8 +709,6 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
             pp.create_switch(
                 net,
                 bus=bus_map[b1],
-                element=bus_map[b2],
-                et="b",
                 element=l_idx,
                 et="l",
                 closed=bool(br.get("closed", True)),
