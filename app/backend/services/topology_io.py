@@ -595,16 +595,31 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
     bus_map: dict[str, int] = {}
     net.bus_geodata = pd.DataFrame(columns=["x", "y"])
 
+    # 1. Classificar e criar barras com nível de tensão MT (20 kV) ou BT (0.4 kV)
     for b in data.get("buses", []):
         bid = str(b["id"])
-        coords = b.get("geometry", {}).get("coordinates", [0, 0])
-        raw_vn = b.get("nominal_voltage", 20000.0)
-        vn_kv = raw_vn / 1000.0 if raw_vn > 100.0 else raw_vn
+        pots = b.get("results", {}).get("potentials", [])
+        if pots and isinstance(pots[0], (list, tuple)) and len(pots[0]) >= 2:
+            v0 = pots[0]
+            mag = (float(v0[0]) ** 2 + float(v0[1]) ** 2) ** 0.5
+            v_ll = mag * (3.0**0.5)
+            vn_kv = 20.0 if v_ll > 5000.0 else 0.4
+        else:
+            raw_vn = b.get("nominal_voltage")
+            if raw_vn:
+                vn_kv = float(raw_vn) / 1000.0 if float(raw_vn) > 100.0 else float(raw_vn)
+            else:
+                vn_kv = 20.0 if ("MV" in bid or "BUZEN" in bid) else 0.4
+
         idx = pp.create_bus(net, vn_kv=vn_kv, name=bid)
         bus_map[bid] = idx
-        if coords and len(coords) >= 2:
-            net.bus_geodata.loc[idx] = {"x": float(coords[0]), "y": float(coords[1])}
+        geom = b.get("geometry")
+        if geom and "coordinates" in geom and geom["coordinates"] != [0, 0]:
+            coords = geom["coordinates"]
+            if len(coords) >= 2 and (coords[0] != 0 or coords[1] != 0):
+                net.bus_geodata.loc[idx] = {"x": float(coords[0]), "y": float(coords[1])}
 
+    # 2. Fonte / Nó Slack
     sources = data.get("sources", [])
     slack_bid = (
         str(sources[0]["bus"])
@@ -614,15 +629,41 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
     if slack_bid and slack_bid in bus_map:
         pp.create_ext_grid(net, bus=bus_map[slack_bid], vm_pu=1.0)
 
-    params = {str(p["id"]): p for p in data.get("lines_params", [])}
+    lines_params = {str(p["id"]): p for p in data.get("lines_params", [])}
+    trafos_params = {str(p["id"]): p for p in data.get("transformers_params", [])}
+
+    # 3. Branches (Linhas, Chaves e Transformadores)
     for br in data.get("branches", []):
         b1, b2 = str(br.get("bus1")), str(br.get("bus2"))
         if b1 not in bus_map or b2 not in bus_map:
             continue
         btype = br.get("type", "line")
+
+        # Herdar coordenadas geográficas para barras virtuais de subestação (ex.: MVVoltage_source)
+        if (
+            b1 == "MVVoltage_source"
+            and bus_map[b1] not in net.bus_geodata.index
+            and bus_map[b2] in net.bus_geodata.index
+        ):
+            c = net.bus_geodata.loc[bus_map[b2]]
+            net.bus_geodata.loc[bus_map[b1]] = {
+                "x": float(c["x"]) - 0.0003,
+                "y": float(c["y"]) + 0.0003,
+            }
+        elif (
+            b2 == "MVVoltage_source"
+            and bus_map[b2] not in net.bus_geodata.index
+            and bus_map[b1] in net.bus_geodata.index
+        ):
+            c = net.bus_geodata.loc[bus_map[b1]]
+            net.bus_geodata.loc[bus_map[b2]] = {
+                "x": float(c["x"]) - 0.0003,
+                "y": float(c["y"]) + 0.0003,
+            }
+
         if btype == "line":
             pid = str(br.get("params_id"))
-            p = params.get(pid, {})
+            p = lines_params.get(pid, {})
             z = p.get("z_line", [[[0.2]], [[0.1]]])
             r = float(z[0][0][0]) if z else 0.2
             x = float(z[1][0][0]) if len(z) > 1 else 0.1
@@ -641,15 +682,60 @@ def _import_roseau_json(file_bytes: bytes, filename: str = "roseau.json") -> dic
                 name=str(br.get("id", f"{b1}-{b2}")),
             )
         elif btype == "switch":
+            # Conecta fisicamente o ramo como chave de baixa impedância
+            l_idx = pp.create_line_from_parameters(
+                net,
+                from_bus=bus_map[b1],
+                to_bus=bus_map[b2],
+                length_km=0.001,
+                r_ohm_per_km=0.001,
+                x_ohm_per_km=0.001,
+                c_nf_per_km=0.0,
+                max_i_ka=1.0,
+                name=str(br.get("id", f"SW_{b1}_{b2}")),
+            )
             pp.create_switch(
                 net,
                 bus=bus_map[b1],
-                element=bus_map[b2],
-                et="b",
+                element=l_idx,
+                et="l",
                 closed=bool(br.get("closed", True)),
+                name=str(br.get("id", f"SW_{b1}_{b2}")),
+            )
+        elif btype == "transformer":
+            pid = str(br.get("params_id"))
+            tp = trafos_params.get(pid, {})
+            sn_va = float(tp.get("sn", 100000.0))
+            sn_mva = max(sn_va / 1e6, 0.01)
+            uhv_v = float(tp.get("uhv", 20000.0))
+            ulv_v = float(tp.get("ulv", 400.0))
+            vsc = float(tp.get("vsc", 0.04))
+            vk_pct = max(vsc * 100.0, 1.0)
+            psc = float(tp.get("psc", 2000.0))
+            vkr_pct = max((psc / sn_va) * 100.0, 0.1)
+            pfe_kw = float(tp.get("p0", 200.0)) / 1000.0
+            i0_pct = float(tp.get("i0", 0.02)) * 100.0
+
+            v1 = float(net.bus.at[bus_map[b1], "vn_kv"])
+            v2 = float(net.bus.at[bus_map[b2], "vn_kv"])
+            hv_b = bus_map[b1] if v1 >= v2 else bus_map[b2]
+            lv_b = bus_map[b2] if v1 >= v2 else bus_map[b1]
+
+            pp.create_transformer_from_parameters(
+                net,
+                hv_bus=hv_b,
+                lv_bus=lv_b,
+                sn_mva=sn_mva,
+                vn_hv_kv=max(uhv_v / 1000.0, 1.0),
+                vn_lv_kv=max(ulv_v / 1000.0, 0.1),
+                vk_percent=vk_pct,
+                vkr_percent=vkr_pct,
+                pfe_kw=pfe_kw,
+                i0_percent=i0_pct,
+                name=str(br.get("id", f"T_{b1}_{b2}")),
             )
 
-    # Loads (somando potências de fases ativas e reativas)
+    # 4. Loads (somando potências de fases ativas e reativas)
     for ld in data.get("loads", []):
         bus_id = str(ld.get("bus"))
         if bus_id in bus_map:

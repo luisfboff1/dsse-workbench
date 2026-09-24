@@ -129,18 +129,27 @@ export function computeSpatialLayout(
   const geoBuses = topology.buses.filter((b) => b.geoX !== undefined && b.geoY !== undefined)
   const hasGeoCoords = geoBuses.length > 0
 
-  // Hoisted out of the per-bus loop below. Recomputing the filter and both
-  // maxima inside the loop made this O(buses^2); the spread form
-  // (Math.max(...arr)) also blows the argument limit on a big enough case.
-  let maxGeoX = 0
-  let maxGeoY = 0
+  let minGeoX = Number.POSITIVE_INFINITY
+  let maxGeoX = Number.NEGATIVE_INFINITY
+  let minGeoY = Number.POSITIVE_INFINITY
+  let maxGeoY = Number.NEGATIVE_INFINITY
   for (const b of geoBuses) {
+    if (b.geoX! < minGeoX) minGeoX = b.geoX!
     if (b.geoX! > maxGeoX) maxGeoX = b.geoX!
+    if (b.geoY! < minGeoY) minGeoY = b.geoY!
     if (b.geoY! > maxGeoY) maxGeoY = b.geoY!
   }
   const padding = 50
-  const spanX = maxGeoX || 1
-  const spanY = maxGeoY || 1
+  const rawSpanX = maxGeoX - minGeoX
+  const rawSpanY = maxGeoY - minGeoY
+  const spanX = rawSpanX > 1e-7 ? rawSpanX : 1
+  const spanY = rawSpanY > 1e-7 ? rawSpanY : 1
+
+  const availW = Math.max(100, width - 2 * padding)
+  const availH = Math.max(100, height - 2 * padding)
+  const scale = Math.min(availW / spanX, availH / spanY)
+  const offsetX = padding + (availW - spanX * scale) / 2
+  const offsetY = padding + (availH - spanY * scale) / 2
 
   // Computed up front so both the force path (as its starting positions) and
   // the default path (as the layout itself) can use it.
@@ -149,8 +158,9 @@ export function computeSpatialLayout(
   const nodes: LayoutNode[] = topology.buses.map((bus) => {
     const kind = measurementIndex.busKind.get(bus.id)
     if (hasGeoCoords && bus.geoX !== undefined && bus.geoY !== undefined) {
-      const x = (bus.geoX / spanX) * (width - 2 * padding) + padding
-      const y = (bus.geoY / spanY) * (height - 2 * padding) + padding
+      const x = offsetX + (bus.geoX - minGeoX) * scale
+      // North-up: higher latitude (geoY) goes towards the top of the canvas (smaller Y)
+      const y = offsetY + (maxGeoY - bus.geoY) * scale
       const node = toLayoutNode(bus, kind, x, y)
       node.fx = x
       node.fy = y
