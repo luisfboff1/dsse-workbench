@@ -111,6 +111,28 @@ def get_csv_template() -> tuple[bytes, str, str]:
     return buf.getvalue(), "template.zip", "application/zip"
 
 
+def _bus_xy(net: "pp.pandapowerNet", pp_idx: int) -> tuple[float, float] | None:
+    """Bus coordinates, from either pandapower layout: `net.bus_geodata`
+    (x/y columns, pandapower 2.x) or the GeoJSON `net.bus.geo` column
+    (pandapower 3.x, which dropped `bus_geodata`)."""
+    geodata = getattr(net, "bus_geodata", None)
+    if geodata is not None and len(geodata) > 0 and pp_idx in geodata.index:
+        geo = geodata.loc[pp_idx]
+        return float(geo.x), float(geo.y)
+    if "geo" in net.bus.columns:
+        geo = net.bus.at[pp_idx, "geo"]
+        if isinstance(geo, str):
+            try:
+                geo = json.loads(geo)
+            except ValueError:
+                return None
+        if isinstance(geo, dict) and geo.get("type") == "Point":
+            coords = geo.get("coordinates") or []
+            if len(coords) >= 2:
+                return float(coords[0]), float(coords[1])
+    return None
+
+
 def ppnet_to_topology(
     net: "pp.pandapowerNet",
     source_id: str = "imported",
@@ -258,16 +280,9 @@ def ppnet_to_topology(
             "qGenDG": round(dg_q.get(b, 0.0), 5),
         }
 
-        if (
-            hasattr(net, "bus_geodata")
-            and net.bus_geodata is not None
-            and len(net.bus_geodata) > 0
-        ):
-            if pp_idx in net.bus_geodata.index:
-                geo = net.bus_geodata.loc[pp_idx]
-                bus_dict["geoX"] = float(geo.x)
-                bus_dict["geoY"] = float(geo.y)
-
+        xy = _bus_xy(net, pp_idx)
+        if xy is not None:
+            bus_dict["geoX"], bus_dict["geoY"] = xy
         buses_out.append(bus_dict)
 
     lines_out = []

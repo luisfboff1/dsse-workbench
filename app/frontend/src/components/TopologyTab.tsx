@@ -11,6 +11,8 @@ import { Network, Plus, Trash, CircleNotch, Upload, Export, FloppyDisk } from '@
 import type { Topology, Bus, Line, MeasurementKind, OpenSwitch } from '@/lib/types'
 import { DEFAULT_TOPOLOGIES } from '@/lib/topologies'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
+import { AttributeExplorer } from '@/components/AttributeExplorer'
+import { EMPTY_SELECTION, type TopologySelection } from '@/lib/selection'
 import { ImportTopologyDialog } from './ImportTopologyDialog'
 import { ExportTopologyDropdown } from './ExportTopologyDropdown'
 import { SaveTopologyDialog } from './SaveTopologyDialog'
@@ -67,6 +69,12 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
   // away instead of cluttering the default list (25 of 60 cases are LV).
   const [ppVoltageClass, setPpVoltageClass] = useState<PandapowerVoltageClass>('distribution')
   const [hoveredLineId, setHoveredLineId] = useState<number | null>(null)
+  const [selection, setSelection] = useState<TopologySelection>(EMPTY_SELECTION)
+  // A different network has different ids: keeping the old selection would
+  // highlight unrelated elements.
+  useEffect(() => {
+    setSelection(EMPTY_SELECTION)
+  }, [topology.id])
   const [importOpen, setImportOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
   const [savedTopologies, setSavedTopologies] = useState<Topology[]>(() => {
@@ -276,6 +284,27 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
     onTopologyChange(next)
   }
 
+  // Same as applyMeterToAll but for an explicit id list — the attribute
+  // explorer's "Set meter" on the current selection.
+  const setMeterKindBulk = (kind: 'bus' | 'line', ids: number[], meter: MeasurementKind | 'none') => {
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    if (kind === 'bus') {
+      const rest = (topology.measurements ?? []).filter((m) => !idSet.has(m.busId))
+      const added = meter === 'none' ? [] : ids.map((busId) => ({ busId, kind: meter }))
+      onTopologyChange({ ...topology, measurements: [...rest, ...added] })
+    } else {
+      const rest = (topology.line_measurements ?? []).filter((m) => !idSet.has(m.lineId))
+      const added = meter === 'none' ? [] : ids.map((lineId) => ({ lineId, kind: meter }))
+      onTopologyChange({ ...topology, line_measurements: [...rest, ...added] })
+    }
+    toast.success(
+      meter === 'none'
+        ? `Removed meters from ${ids.length} ${kind === 'bus' ? 'bus(es)' : 'line(s)'}`
+        : `Set ${meter.toUpperCase()} on ${ids.length} ${kind === 'bus' ? 'bus(es)' : 'line(s)'}`
+    )
+  }
+
   const toggleSwitch = (switchId: number, closed: boolean) => {
     const currentSwitches = getTopologySwitches(topology)
     const switchIndex = currentSwitches.findIndex((s) => s.id === switchId)
@@ -448,6 +477,16 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
         onApplyMeterToAll={applyMeterToAll}
         onSwitchToggle={toggleSwitch}
         onResetSwitches={resetSwitchesToDefault}
+        selection={selection}
+        onSelectionChange={setSelection}
+        explorer={
+          <AttributeExplorer
+            topology={topology}
+            selection={selection}
+            onSelectionChange={setSelection}
+            onSetMeterKind={setMeterKindBulk}
+          />
+        }
       />
 
       <Card>

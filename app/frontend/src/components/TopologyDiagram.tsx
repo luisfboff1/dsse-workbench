@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import * as d3 from 'd3'
 import type { MeasurementKind, PowerFlowResult, Topology } from '@/lib/types'
 import { buildTopologyTree, getTopologySwitches, type TopologyTreeNode } from '@/lib/networkTopology'
@@ -11,6 +11,12 @@ import {
   pickGlyphSwitches,
 } from '@/lib/topologyLayout'
 import { TopologyCanvasView, type TopologyCanvasHandle } from '@/components/TopologyCanvasView'
+import { EMPTY_SELECTION, selectOnly, toggleInSelection, type TopologySelection } from '@/lib/selection'
+import type { TopologyMapHandle } from '@/components/TopologyMapView'
+
+// MapLibre is the heaviest dependency in the app: keep it out of the main
+// bundle until someone actually opens the Map view.
+const TopologyMapView = lazy(() => import('@/components/TopologyMapView').then((m) => ({ default: m.TopologyMapView })))
 import { useVirtualRows } from '@/hooks/useVirtualRows'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -18,7 +24,7 @@ import { Popover, PopoverContent, PopoverAnchor, PopoverTrigger } from '@/compon
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { Network, TreeStructure, ArrowsOut, ArrowsDownUp, ArrowsLeftRight, Gauge, List, X, ToggleRight, ArrowCounterClockwise, Lightning, Sparkle, Atom } from '@phosphor-icons/react'
+import { Network, TreeStructure, ArrowsOut, ArrowsDownUp, ArrowsLeftRight, Gauge, List, X, ToggleRight, ArrowCounterClockwise, Lightning, Sparkle, Atom, MapTrifold, Table } from '@phosphor-icons/react'
 import type { Switch as SwitchType } from '@/lib/types'
 
 interface TopologyDiagramProps {
@@ -42,9 +48,20 @@ interface TopologyDiagramProps {
   onSwitchToggle?: (switchId: number, closed: boolean) => void
   /** Reset all switches to the default configuration (e.g. pristine pandapower case). */
   onResetSwitches?: () => void
+  /** Elements highlighted on the diagram (shared with the attribute table). */
+  selection?: TopologySelection
+  /** Click a bus/line to select it; Ctrl/Cmd/Shift-click adds or removes it
+   *  without opening the meter popover. */
+  onSelectionChange?: (selection: TopologySelection) => void
+  /** Attribute table shown in a dock beside the diagram, toggled by the
+   *  "Table" button in the toolbar. */
+  explorer?: ReactNode
 }
 
-type ViewMode = 'spatial' | 'tree'
+type ViewMode = 'spatial' | 'tree' | 'map'
+
+const DOCK_MIN = 320
+const DOCK_DEFAULT = 460
 type TreeOrientation = 'vertical' | 'horizontal'
 
 interface Node extends d3.SimulationNodeDatum {
@@ -131,13 +148,59 @@ function elbowPath(source: Node, target: Node, orientation: TreeOrientation): st
   return `M${sx},${sy} L${midX},${sy} L${midX},${ty} L${tx},${ty}`
 }
 
-export function TopologyDiagram({ topology, result, voltageLimits, compact = false, onMeasurementKindChange, onLineMeasurementKindChange, onApplyMeterToAll, onSwitchToggle, onResetSwitches }: TopologyDiagramProps) {
+export function TopologyDiagram({ topology, result, voltageLimits, compact = false, onMeasurementKindChange, onLineMeasurementKindChange, onApplyMeterToAll, onSwitchToggle, onResetSwitches, selection, onSelectionChange, explorer }: TopologyDiagramProps) {
+  // The SVG click handlers live inside the (dependency-heavy) draw effect; a
+  // ref lets them read the current selection without redrawing the diagram.
+  const selectionRef = useRef<TopologySelection>(selection ?? EMPTY_SELECTION)
+  selectionRef.current = selection ?? EMPTY_SELECTION
+  // Returns true when the click was an additive (Ctrl/Cmd/Shift) selection
+  // toggle — the caller then skips the meter popover.
+  const selectFromDiagram = useCallback(
+    (kind: 'bus' | 'line', id: number, additive: boolean): boolean => {
+      if (!onSelectionChange) return false
+      onSelectionChange(additive ? toggleInSelection(selectionRef.current, kind, id) : selectOnly(kind, id))
+      return additive
+    },
+    [onSelectionChange]
+  )
+  const selectFromDiagramRef = useRef(selectFromDiagram)
+  selectFromDiagramRef.current = selectFromDiagram
   // Memoized: getTopologySwitches walks every line to synthesize a switch per
   // branch, and this used to re-run on every single React render (a hover, a
   // popover open) rather than only when the topology actually changed.
   const allSwitches = useMemo(() => getTopologySwitches(topology), [topology])
   const svgRef = useRef<SVGSVGElement>(null)
   const canvasHandleRef = useRef<TopologyCanvasHandle>(null)
+  const mapHandleRef = useRef<TopologyMapHandle>(null)
+  const [tableOpen, setTableOpen] = useState(false)
+  // Dock width in px, remembered across sessions; the table is a side panel
+  // the user opens on demand and sizes to taste, not a permanent tenant of
+  // the map's width.
+  const [dockWidth, setDockWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('dsse_topology_dock_width'))
+    return Number.isFinite(saved) && saved >= DOCK_MIN ? saved : DOCK_DEFAULT
+  })
+  const splitRef = useRef<HTMLDivElement>(null)
+  const startDockResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const row = splitRef.current
+    if (!row) return
+    event.preventDefault()
+    const handle = event.currentTarget
+    handle.setPointerCapture(event.pointerId)
+    const rowRect = row.getBoundingClientRect()
+    let latest = dockWidth
+    const onMove = (e: PointerEvent) => {
+      latest = Math.round(Math.min(Math.max(rowRect.right - e.clientX, DOCK_MIN), rowRect.width * 0.7))
+      setDockWidth(latest)
+    }
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onUp)
+      localStorage.setItem('dsse_topology_dock_width', String(latest))
+    }
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onUp)
+  }
   const containerRef = useRef<HTMLDivElement>(null)
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null)
   // Last settled force-layout position per bus id, carried across redraws —
@@ -193,7 +256,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
   // (measurement kinds live on the nodes) but that is O(n), not a re-layout,
   // because the force simulation resumes from the settled positions.
   const canvasLayout = useMemo(() => {
-    if (renderer !== 'canvas') return null
+    if (renderer !== 'canvas' || viewMode === 'map') return null
     const base =
       viewMode === 'spatial'
         ? computeSpatialLayout(topology, dimensions.width, dimensions.height, positionsRef.current, useForceLayout)
@@ -229,12 +292,18 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
   )
 
   const handleCanvasBusClick = useCallback(
-    (busId: number, hit: { x: number; y: number }) => setMeterPopover({ busId, x: hit.x, y: hit.y }),
-    []
+    (busId: number, hit: { x: number; y: number; additive: boolean }) => {
+      if (selectFromDiagram('bus', busId, hit.additive)) return
+      if (onMeasurementKindChange) setMeterPopover({ busId, x: hit.x, y: hit.y })
+    },
+    [selectFromDiagram, onMeasurementKindChange]
   )
   const handleCanvasLineClick = useCallback(
-    (lineId: number, hit: { x: number; y: number }) => setLineMeterPopover({ lineId, x: hit.x, y: hit.y }),
-    []
+    (lineId: number, hit: { x: number; y: number; additive: boolean }) => {
+      if (selectFromDiagram('line', lineId, hit.additive)) return
+      if (onLineMeasurementKindChange) setLineMeterPopover({ lineId, x: hit.x, y: hit.y })
+    },
+    [selectFromDiagram, onLineMeasurementKindChange]
   )
   const handleCanvasNodeMoved = useCallback((busId: number, x: number, y: number) => {
     positionsRef.current.set(busId, { x, y })
@@ -283,6 +352,10 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
   }, [compact])
 
   const fitToView = () => {
+    if (viewMode === 'map') {
+      mapHandleRef.current?.fit()
+      return
+    }
     if (renderer === 'canvas') {
       canvasHandleRef.current?.fit()
       return
@@ -300,8 +373,8 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     // blows the nodes up to fill whatever panel width is available instead
     // of rendering at a legible-but-compact size.
     const scale = Math.max(
-      Math.min((width - padding * 2) / bounds.width, (height - padding * 2) / bounds.height, 1.5),
-      0.05
+      Math.min((width - padding * 2) / bounds.width, (height - padding * 2) / bounds.height, 2.5),
+      0.01
     )
     const tx = width / 2 - scale * (bounds.x + bounds.width / 2)
     const ty = height / 2 - scale * (bounds.y + bounds.height / 2)
@@ -349,11 +422,24 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     }
 
     const g = svg.append('g').attr('class', 'diagram-root')
+
+    const updateZoomScale = (k: number) => {
+      const s = k > 1 ? 1 / Math.pow(k, 0.75) : 1
+      g.selectAll('.scalable-node').attr('transform', `scale(${s})`)
+      g.selectAll('.scalable-label').attr('transform', `scale(${s})`)
+      g.selectAll('.scalable-badge-inner').attr('transform', `scale(${s})`)
+      g.selectAll('.scalable-switch-inner').attr('transform', `scale(${s})`)
+      if (topology.lines.length > 100) {
+        g.selectAll('.link-labels-layer').style('opacity', k >= 1.8 ? 1 : 0)
+      }
+    }
+
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.05, 4])
+      .scaleExtent([0.01, 50])
       .on('zoom', (event) => {
         g.attr('transform', event.transform)
+        updateZoomScale(event.transform.k)
       })
     svg.call(zoom)
     zoomRef.current = zoom
@@ -363,11 +449,14 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     // the zoomed/panned SVG data space), since the popover itself is a
     // normal React overlay positioned with plain CSS, not an SVG element.
     function attachMeasurementClick(sel: d3.Selection<d3.BaseType, Node, SVGGElement, unknown>) {
-      if (!onMeasurementKindChange) return
+      if (!onMeasurementKindChange && !onSelectionChange) return
       sel
         .style('cursor', 'pointer')
         .on('click', (event: MouseEvent, d: Node) => {
           event.stopPropagation()
+          const additive = event.ctrlKey || event.metaKey || event.shiftKey
+          if (selectFromDiagramRef.current('bus', d.id, additive)) return
+          if (!onMeasurementKindChange) return
           const rect = containerRef.current?.getBoundingClientRect()
           if (!rect) return
           setMeterPopover({ busId: d.id, x: event.clientX - rect.left, y: event.clientY - rect.top })
@@ -377,20 +466,27 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     // Small colored badge showing the assigned meter kind — 'onNode' picks
     // where it sits (differs between the circle layout and the bus-bar tick
     // layout, both drawn elsewhere in this effect).
-    function drawMeasurementBadge(sel: d3.Selection<d3.BaseType, Node, SVGGElement, unknown>, dx: number, dy: number) {
+    function drawMeasurementBadge(
+      sel: d3.Selection<d3.BaseType, Node, SVGGElement, unknown>,
+      dx: number,
+      dy: number,
+      radius = 8,
+      fontSize = 9
+    ) {
       if (!onMeasurementKindChange) return
       const badge = sel.filter((d: Node) => !!d.measurementKind).append('g').attr('transform', `translate(${dx}, ${dy})`)
       badge
         .append('circle')
-        .attr('r', 8)
+        .attr('r', radius)
         .attr('fill', 'var(--color-card)')
         .attr('stroke', (d: Node) => (d.measurementKind ? MEASUREMENT_KIND_INFO[d.measurementKind].colorVar : 'var(--color-border)'))
-        .attr('stroke-width', 2)
+        .attr('stroke-width', radius > 6 ? 2 : 1.2)
+        .attr('vector-effect', 'non-scaling-stroke')
       badge
         .append('text')
         .attr('text-anchor', 'middle')
-        .attr('dy', 3)
-        .attr('font-size', 9)
+        .attr('dy', radius > 6 ? 3 : 2)
+        .attr('font-size', fontSize)
         .attr('font-weight', 700)
         .attr('fill', (d: Node) => (d.measurementKind ? MEASUREMENT_KIND_INFO[d.measurementKind].colorVar : 'var(--color-foreground)'))
         .text((d: Node) => (d.measurementKind ? MEASUREMENT_KIND_INFO[d.measurementKind].shortLabel[0] : '?'))
@@ -408,7 +504,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
       links: Link[],
       pathFn: (d: Link) => string | null
     ) {
-      if (!onLineMeasurementKindChange) return null
+      if (!onLineMeasurementKindChange && !onSelectionChange) return null
       const hit = parent
         .append('g')
         .selectAll('path')
@@ -417,9 +513,13 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('fill', 'none')
         .attr('stroke', 'transparent')
         .attr('stroke-width', 14)
+        .attr('vector-effect', 'non-scaling-stroke')
         .style('cursor', 'pointer')
         .on('click', (event: MouseEvent, d: Link) => {
           event.stopPropagation()
+          const additive = event.ctrlKey || event.metaKey || event.shiftKey
+          if (selectFromDiagramRef.current('line', d.id, additive)) return
+          if (!onLineMeasurementKindChange) return
           const rect = containerRef.current?.getBoundingClientRect()
           if (!rect) return
           setLineMeterPopover({ lineId: d.id, x: event.clientX - rect.left, y: event.clientY - rect.top })
@@ -445,17 +545,19 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .data(metered)
         .join('g')
         .style('pointer-events', 'none')
-      sel
+      const inner = sel.append('g').attr('class', 'scalable-badge-inner')
+      inner
         .append('circle')
-        .attr('r', 6)
+        .attr('r', 5)
         .attr('fill', 'var(--color-card)')
         .attr('stroke', (d: Link) => MEASUREMENT_KIND_INFO[d.lineMeasurementKind!].colorVar)
-        .attr('stroke-width', 1.75)
-      sel
+        .attr('stroke-width', 1.5)
+        .attr('vector-effect', 'non-scaling-stroke')
+      inner
         .append('text')
         .attr('text-anchor', 'middle')
-        .attr('dy', 2.5)
-        .attr('font-size', 7.5)
+        .attr('dy', 2)
+        .attr('font-size', 6.5)
         .attr('font-weight', 700)
         .attr('fill', (d: Link) => MEASUREMENT_KIND_INFO[d.lineMeasurementKind!].colorVar)
         .text((d: Link) => MEASUREMENT_KIND_INFO[d.lineMeasurementKind!].shortLabel[0])
@@ -490,15 +592,17 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .selectAll('line')
         .data(links)
         .join('line')
+        .attr('class', 'link-el')
         .attr('stroke', (d: Link) => (lineResults.has(d.id) ? 'var(--color-status-warn)' : 'var(--color-accent)'))
         .attr('stroke-width', (d: Link) => {
           const flow = Math.abs(lineResults.get(d.id)?.pFrom ?? 0)
           return result ? 1.5 + 5 * (flow / maxAbsFlow) : 2
         })
         .attr('stroke-opacity', result ? 0.78 : 0.6)
+        .attr('vector-effect', 'non-scaling-stroke')
 
-      const labels = parent
-        .append('g')
+      const labelsLayer = parent.append('g').attr('class', 'link-labels-layer')
+      const labels = labelsLayer
         .selectAll('text')
         .data(links)
         .join('text')
@@ -547,6 +651,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('stroke-width', 1.5)
         .attr('stroke-dasharray', '5,4')
         .attr('stroke-opacity', 0.6)
+        .attr('vector-effect', 'non-scaling-stroke')
 
       const labels = parent
         .append('g')
@@ -589,8 +694,11 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .join('g')
         .style('cursor', onToggle ? 'pointer' : 'default')
 
+      // Inner scalable group — counter-scaled by updateZoomScale
+      const swInner = sel.append('g').attr('class', 'scalable-switch-inner')
+
       // Transparent hit area for easy clicking
-      sel
+      swInner
         .append('rect')
         .attr('x', -10)
         .attr('y', -8)
@@ -599,7 +707,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('fill', 'transparent')
 
       // For open switches: mask the dashed line directly beneath the gap
-      const openSel = sel.filter((d) => !d.closed)
+      const openSel = swInner.filter((d) => !d.closed)
       openSel
         .append('rect')
         .attr('x', -6)
@@ -609,7 +717,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('fill', 'var(--color-card)')
 
       // Terminal 1 (dot)
-      sel
+      swInner
         .append('circle')
         .attr('cx', -4.5)
         .attr('cy', 0)
@@ -617,7 +725,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('fill', 'var(--color-foreground)')
 
       // Terminal 2 (dot)
-      sel
+      swInner
         .append('circle')
         .attr('cx', 4.5)
         .attr('cy', 0)
@@ -625,7 +733,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('fill', 'var(--color-foreground)')
 
       // Closed blade (connects straight: •—•)
-      const closedSel = sel.filter((d) => Boolean(d.closed))
+      const closedSel = swInner.filter((d) => Boolean(d.closed))
       closedSel
         .append('line')
         .attr('x1', -4.5)
@@ -634,6 +742,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('y2', 0)
         .attr('stroke', 'var(--color-foreground)')
         .attr('stroke-width', 1.5)
+        .attr('vector-effect', 'non-scaling-stroke')
 
       // Open blade (angled open: • / •)
       openSel
@@ -645,6 +754,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('stroke', 'var(--color-foreground)')
         .attr('stroke-width', 1.5)
         .attr('stroke-linecap', 'round')
+        .attr('vector-effect', 'non-scaling-stroke')
 
       // Tooltip
       sel
@@ -682,10 +792,15 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     }
 
     function drawNodes(parent: d3.Selection<SVGGElement, unknown, null, undefined>, nodes: Node[]) {
-      const sel = parent.append('g').selectAll('g').data(nodes).join('g')
+      const sel = parent.append('g').selectAll('g').data(nodes).join('g').attr('class', 'bus-node')
       const isDense = nodes.length > 100
 
-      sel
+      // Inner group that updateZoomScale counter-scales so nodes shrink
+      // relative to the map when the user zooms deep — this is what makes
+      // two nearby buses visually separate at high zoom.
+      const inner = sel.append('g').attr('class', 'scalable-node')
+
+      inner
         .append('circle')
         .attr('r', (d: Node) => {
           if (d.type === 'slack') return isDense ? 12 : 22
@@ -701,8 +816,9 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         })
         .attr('stroke', 'var(--color-foreground)')
         .attr('stroke-width', isDense ? 1.2 : 2)
+        .attr('vector-effect', 'non-scaling-stroke')
 
-      sel
+      inner
         .append('text')
         .attr('text-anchor', 'middle')
         .attr('dy', isDense ? 3 : 4)
@@ -716,7 +832,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .text((d: Node) => d.id)
 
       if (result) {
-        sel
+        inner
           .append('text')
           .attr('text-anchor', 'middle')
           .attr('dy', isDense ? -14 : -28)
@@ -730,16 +846,16 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
       }
 
       const genOffset = isDense ? 8 : 15
-      const genIndicator = sel.filter((d: Node) => d.pGen > 0).append('g').attr('transform', `translate(${genOffset}, ${-genOffset})`)
+      const genIndicator = inner.filter((d: Node) => d.pGen > 0).append('g').attr('transform', `translate(${genOffset}, ${-genOffset})`)
       genIndicator.append('circle').attr('r', isDense ? 4 : 6.5).attr('fill', 'var(--color-status-good)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
       genIndicator.append('text').attr('text-anchor', 'middle').attr('dy', isDense ? 2 : 3.5).attr('font-size', isDense ? 5.5 : 8.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('G')
 
       const loadOffset = isDense ? 8 : 15
-      const loadIndicator = sel.filter((d: Node) => d.pLoad > 0).append('g').attr('transform', `translate(${-loadOffset}, ${-loadOffset})`)
+      const loadIndicator = inner.filter((d: Node) => d.pLoad > 0).append('g').attr('transform', `translate(${-loadOffset}, ${-loadOffset})`)
       loadIndicator.append('rect').attr('x', isDense ? -3 : -5).attr('y', isDense ? -3 : -5).attr('width', isDense ? 6 : 10).attr('height', isDense ? 6 : 10).attr('fill', 'var(--color-destructive)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
       loadIndicator.append('text').attr('text-anchor', 'middle').attr('dy', isDense ? 2 : 3.5).attr('font-size', isDense ? 5.5 : 8.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('L')
 
-      const dgIndicator = sel.filter((d: Node) => (d.pGenDG ?? 0) !== 0).append('g').attr('transform', `translate(${-loadOffset}, ${loadOffset})`)
+      const dgIndicator = inner.filter((d: Node) => (d.pGenDG ?? 0) !== 0).append('g').attr('transform', `translate(${-loadOffset}, ${loadOffset})`)
       dgIndicator.append('circle').attr('r', isDense ? 4.5 : 7.5).attr('fill', 'var(--color-method-ldf)').attr('stroke', 'var(--color-foreground)').attr('stroke-width', 1)
       dgIndicator.append('text').attr('text-anchor', 'middle').attr('dy', isDense ? 2 : 3).attr('font-size', isDense ? 5 : 6.5).attr('font-weight', 600).attr('fill', 'var(--color-primary-foreground)').text('DG')
       dgIndicator.append('title').text('Distributed generation (sgen) — fixed PQ, not voltage-controlled')
@@ -748,7 +864,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
       sel.append('title').text((d: Node) => `${d.name || `Bus ${d.id}`} (${d.type.toUpperCase()})`)
 
       if (!isDense) {
-        sel
+        inner
           .append('text')
           .attr('text-anchor', 'middle')
           .attr('dy', 32)
@@ -758,6 +874,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
       }
 
       drawMeasurementBadge(sel, isDense ? 8 : 15, isDense ? 9 : 17)
+      drawMeasurementBadge(inner, isDense ? 8 : 15, isDense ? 9 : 17)
       attachMeasurementClick(sel)
 
       const position = () => sel.attr('transform', (d) => `translate(${d.x},${d.y})`)
@@ -774,6 +891,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .selectAll('path')
         .data(links)
         .join('path')
+        .attr('class', 'link-el')
         .attr('fill', 'none')
         .attr('stroke', (d: Link) => (lineResults.has(d.id) ? 'var(--color-status-warn)' : 'var(--color-foreground)'))
         .attr('stroke-width', (d: Link) => {
@@ -818,7 +936,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     }
 
     function drawBusBars(parent: d3.Selection<SVGGElement, unknown, null, undefined>, nodes: Node[]) {
-      const sel = parent.append('g').selectAll('g').data(nodes).join('g')
+      const sel = parent.append('g').selectAll('g').data(nodes).join('g').attr('class', 'bus-node')
 
       const slack = sel.filter((d: Node) => d.type === 'slack')
       slack
@@ -1110,6 +1228,18 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     return undefined
   }, [topology, dimensions, result, voltageLimits, viewMode, orientation, renderer, measurementIndex, useForceLayout])
 
+  // Selection highlight on the SVG renderer. A separate effect (declared
+  // after the draw effect, so it also runs after every rebuild) toggles a CSS
+  // class instead of redrawing — selecting must not cost a full re-layout.
+  useEffect(() => {
+    const svgEl = svgRef.current
+    if (!svgEl) return
+    const buses = selection?.buses
+    const lines = selection?.lines
+    const root = d3.select(svgEl)
+    root.selectAll<SVGGElement, Node>('.bus-node').classed('is-selected', (d) => !!buses?.has(d.id))
+    root.selectAll<SVGElement, Link>('.link-el').classed('is-selected', (d) => !!lines?.has(d.id))
+  }, [selection, topology, dimensions, result, voltageLimits, viewMode, orientation, renderer, measurementIndex, useForceLayout])
   // Memoized: this runs a full BFS over the network. Unmemoized in the render
   // body it re-ran on every React render, including ones that only opened a
   // popover.
@@ -1130,7 +1260,9 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
             <CardDescription className="text-xs sm:text-sm">
               {result
                 ? 'Voltage is encoded by bus color; active flow by branch thickness'
-                : viewMode === 'spatial'
+                : viewMode === 'map'
+                  ? 'Geographic view - buses and lines placed by their coordinates over OpenStreetMap; click to select, Ctrl/Shift-click to add'
+                  : viewMode === 'spatial'
                   ? useForceLayout
                     ? 'Force-directed view - drag nodes to reposition them'
                     : 'Concentric view - rings are hops from the substation; drag nodes to reposition them'
@@ -1147,6 +1279,9 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
             </Button>
             <Button type="button" size="sm" variant={viewMode === 'tree' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setViewMode('tree')}>
               <TreeStructure className="w-3.5 h-3.5" /> Tree
+            </Button>
+            <Button type="button" size="sm" variant={viewMode === 'map' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setViewMode('map')} title="Geographic map (uses bus coordinates)">
+              <MapTrifold className="w-3.5 h-3.5" /> Map
             </Button>
             {viewMode === 'tree' && (
               <>
@@ -1181,7 +1316,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
                 has to be readable at a glance — a lone button showing "Fast"
                 is ambiguous about whether that is the current state or the
                 thing it will switch to. Same pattern as Spatial/Tree above. */}
-            <div className="flex items-center rounded-md border p-0.5">
+            <div className={`${viewMode === 'map' ? 'hidden' : 'flex'} items-center rounded-md border p-0.5`}>
               <Button
                 type="button"
                 size="sm"
@@ -1220,6 +1355,18 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
             >
               <List className="w-3.5 h-3.5" /> Meters
             </Button>
+            {explorer && (
+              <Button
+                type="button"
+                size="sm"
+                variant={tableOpen ? 'default' : 'outline'}
+                className="h-7 text-xs"
+                onClick={() => setTableOpen((v) => !v)}
+                title="Attribute table: filter and select buses/lines"
+              >
+                <Table className="w-3.5 h-3.5" /> Table
+              </Button>
+            )}
             {onSwitchToggle && allSwitches.length > 0 && (
               <Button
                 type="button"
@@ -1239,6 +1386,8 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         </div>
       </CardHeader>
       <CardContent className={compact ? 'px-4 pb-4' : 'px-4 sm:px-6 pb-4 sm:pb-6'}>
+        <div ref={splitRef} className="flex flex-col gap-3 lg:flex-row lg:gap-0">
+        <div className="min-w-0 flex-1">
         {treeData && (treeData.extraLines.length > 0 || treeData.unreachable.length > 0) && (
           <div className="mb-3 text-xs sm:text-sm text-status-warn">
             {treeData.extraLines.length > 0 &&
@@ -1249,19 +1398,38 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
           </div>
         )}
         <div ref={containerRef} className="relative border rounded-lg overflow-hidden bg-background">
-          {renderer === 'canvas' && canvasLayout ? (
+          {viewMode === 'map' ? (
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center text-sm text-muted-foreground" style={{ height: dimensions.height }}>
+                  Loading map…
+                </div>
+              }
+            >
+              <TopologyMapView
+                ref={mapHandleRef}
+                topology={topology}
+                selection={selection}
+                width={dimensions.width}
+                height={dimensions.height}
+                onBusClick={handleCanvasBusClick}
+                onLineClick={handleCanvasLineClick}
+              />
+            </Suspense>
+          ) : renderer === 'canvas' && canvasLayout ? (
             <TopologyCanvasView
               ref={canvasHandleRef}
               layout={canvasLayout}
-              viewMode={viewMode}
+              viewMode={viewMode === 'tree' ? 'tree' : 'spatial'}
               orientation={orientation}
               width={dimensions.width}
               height={dimensions.height}
               result={result}
               voltageLimits={{ min: voltageLimits?.min ?? 0.95, max: voltageLimits?.max ?? 1.05 }}
               detailed={detailed}
-              onBusClick={onMeasurementKindChange ? handleCanvasBusClick : undefined}
-              onLineClick={onLineMeasurementKindChange ? handleCanvasLineClick : undefined}
+              onBusClick={onMeasurementKindChange || onSelectionChange ? handleCanvasBusClick : undefined}
+              onLineClick={onLineMeasurementKindChange || onSelectionChange ? handleCanvasLineClick : undefined}
+              selection={selection}
               onSwitchToggle={onSwitchToggle}
               onNodeMoved={handleCanvasNodeMoved}
               fitKey={canvasFitKey}
@@ -1622,6 +1790,42 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
             )}
           </div>
         )}
+        </div>
+        {explorer && tableOpen && (
+          <>
+            <div
+              onPointerDown={startDockResize}
+              onDoubleClick={() => {
+                setDockWidth(DOCK_DEFAULT)
+                localStorage.setItem('dsse_topology_dock_width', String(DOCK_DEFAULT))
+              }}
+              className="hidden lg:flex w-3 shrink-0 cursor-col-resize items-center justify-center touch-none group"
+              title="Drag to resize · double-click to reset"
+              role="separator"
+              aria-orientation="vertical"
+            >
+              <div className="h-12 w-1 rounded-full bg-border group-hover:bg-selection" />
+            </div>
+            <div
+              className="relative min-w-0 lg:w-[var(--dock-w)] lg:shrink-0"
+              style={{ ['--dock-w' as string]: `${dockWidth}px` }}
+            >
+              {explorer}
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="absolute right-1.5 top-1.5 h-6 w-6"
+                onClick={() => setTableOpen(false)}
+                aria-label="Collapse attribute table"
+                title="Collapse table"
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </>
+        )}
+        </div>
       </CardContent>
     </Card>
   )

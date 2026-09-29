@@ -99,6 +99,7 @@ the bad-data tab), it's fine to borrow `method-dc` (blue) or `method-ldf`
 | `status-good` | green | converged / passed / in range / detected & fixed |
 | `status-warn` | amber | flagged / medium risk / attention |
 | `status-info` | blue-gray | informational / low risk / under a limit |
+| `selection` | cyan | element selected in the Topology tab (diagram, table, map) — not a status |
 
 Plus the shadcn-standard `destructive` token (red) for failures, out-of-range
 values, and high-risk/undetected bad data — already themed, don't reintroduce
@@ -1062,4 +1063,67 @@ valor não bate com nenhum item.
    - Notificações não-bloqueantes (`toast.warning`, `toast.info`) para alertas de divergência inicial de fluxo de carga ou redes extensas (> 500 barras).
 3. **Dropdown de Exportação (`ExportTopologyDropdown.tsx`):**
    - Menu suspenso com download de um clique gerando downloads dinâmicos de Blob para Workbench JSON, pandapower JSON, Excel (.xlsx), CSV (.zip) e GraphML.
+
+## 2026-09-29 — Aba Topology: Attribute Explorer, seleção compartilhada e filtro por expressão
+
+### Por que
+
+Comparando com o QGIS (tabela de atributos ligada ao mapa, "Select by
+Expression"), a aba Topology era uma pilha de cartões: o diagrama e as tabelas
+não conversavam. Não dava para dizer "me mostre as barras PQ com carga > 0,5
+pu" e ver onde elas estão, nem atribuir medidor a um grupo delas de uma vez.
+
+### O que mudou
+
+- **`AttributeExplorer.tsx`** (novo): tabela de atributos de barras e linhas,
+  somente leitura, ordenação por coluna, filtro por expressão e seleção por
+  clique (Ctrl/Cmd alterna, Shift seleciona intervalo). "Select shown",
+  "Invert", "Selected only", "Clear" e "Set meter" em lote. Janelada com
+  `VirtualTableBody`. **Fica num dock recolhível ao lado do diagrama** (botão
+  *Table* na barra do diagrama, fechado por padrão), com divisória arrastável
+  (largura em `localStorage`, duplo clique reseta) — a primeira versão ficava
+  num cartão abaixo e depois sempre aberta, e comia a largura útil do mapa.
+- **Vista Map** (`TopologyMapView.tsx`, MapLibre GL, carregado sob demanda via
+  `lazy`): terceiro botão do mesmo seletor Spatial/Tree/Map, no mesmo cartão.
+  Barras e linhas por `geoX/geoY` (lon/lat) sobre OpenStreetMap; botão
+  *Basemap* liga/desliga os tiles (a geometria não depende deles, funciona
+  offline). Coordenadas de desenho (ex.: Stagg, 100…800) não são lon/lat:
+  `lib/geo.ts` detecta e oferece "Place it approximately (Grenoble)".
+  Seleção compartilhada com o diagrama e a tabela. Worker do MapLibre 6 precisa
+  de `?worker&url` + `setWorkerUrl` sob Vite.
+- **Backend**: `ppnet_to_topology` só lia `net.bus_geodata` (pandapower 2.x);
+  no pandapower 3.x as coordenadas estão em `net.bus.geo` (GeoJSON). Novo
+  `_bus_xy` lê os dois — sem isso `mv_oberrhein` (lon/lat reais) chegava sem
+  coordenadas.
+- **`lib/expressionFilter.ts`** (novo): mini-linguagem no estilo SQL/QGIS
+  (`type = 'pq' AND pLoad > 0.5`, `IN`, `LIKE`, `IS NULL`, `abs()`…). Parser à
+  mão, **sem `eval`/`new Function`**. Comparação de texto ignora maiúsculas.
+  Campos derivados: `degree` (barras), `xr` (linhas), `meter`.
+- **`lib/selection.ts`** (novo): `TopologySelection { buses, lines }`, um
+  estado só em `TopologyTab`, compartilhado pelo diagrama e pela tabela (e
+  pelo mapa, quando entrar).
+- **`TopologyDiagram` / `TopologyCanvasView`**: props `selection` e
+  `onSelectionChange`. Clique simples seleciona **e** abre o popover de medidor
+  como antes; Ctrl/Cmd/Shift-clique só alterna a seleção. No SVG o destaque é
+  uma classe CSS (`.bus-node.is-selected`, `.link-el.is-selected`) aplicada num
+  efeito próprio — selecionar não redesenha nem re-layouta o diagrama. No
+  canvas é um halo desenhado em pixels de tela (÷ `t.k`), visível mesmo com a
+  rede inteira em zoom afastado.
+- **Token `--selection`** (ciano) em `index.css`, lido pelo CSS e pela paleta do
+  canvas. Ciano de propósito: não pode ser confundido com `status-*`.
+
+### Regras que ficam
+
+- **Seleção é estado de `TopologyTab`, não de cada visão.** Uma nova visão
+  (mapa, painel de camadas) recebe `selection`/`onSelectionChange`; não guarda
+  seleção própria.
+- **Nunca `eval` em filtro digitado.** Estender a linguagem = estender o parser
+  em `expressionFilter.ts`.
+- A seleção zera quando `topology.id` muda (ids de outra rede não valem).
+
+### Próximas etapas (plano)
+
+Painel de camadas com estilo por atributo → aba Mapa (MapLibre, carregada sob
+demanda, só com lon/lat válidos; sem internet mostra só as geometrias) →
+edição no mapa/diagrama com desfazer e arquivo de projeto.
 

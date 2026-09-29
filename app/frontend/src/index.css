@@ -76,6 +76,10 @@
   --status-good: oklch(0.60 0.145 152);
   --status-warn: oklch(0.67 0.18 58);
   --status-info: oklch(0.55 0.20 250);
+
+  /* Highlight for elements selected in the Topology tab (diagram, map and
+     attribute table share it). Cyan so it never reads as a status colour. */
+  --selection: oklch(0.72 0.16 200);
 }
 
 @theme {
@@ -106,7 +110,7 @@
   --color-status-good: var(--status-good);
   --color-status-warn: var(--status-warn);
   --color-status-info: var(--status-info);
-
+  --color-selection: var(--selection);
   --breakpoint-xs: 475px;
   --breakpoint-sm: 640px;
   --breakpoint-md: 768px;
@@ -129,4 +133,21 @@
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-3px); }
   75% { transform: translateX(3px); }
+}
+
+/* Selection highlight for the SVG topology diagram. The canvas renderer draws
+   its own halo (see TopologyCanvasView); both read --color-selection. */
+.bus-node.is-selected {
+  filter: drop-shadow(0 0 3px var(--color-selection)) drop-shadow(0 0 6px var(--color-selection));
+}
+.bus-node.is-selected .scalable-node > circle:first-of-type,
+.bus-node.is-selected > rect,
+.bus-node.is-selected > line:first-of-type {
+  stroke: var(--color-selection);
+  stroke-width: 3px;
+}
+.link-el.is-selected {
+  stroke: var(--color-selection);
+  stroke-opacity: 1;
+  stroke-width: 4px;
 }

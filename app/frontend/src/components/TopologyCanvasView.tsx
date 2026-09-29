@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import * as d3 from 'd3'
 import type { PowerFlowResult } from '@/lib/types'
+import type { TopologySelection } from '@/lib/selection'
 import { MEASUREMENT_KIND_INFO } from '@/lib/measurements'
 import {
   elbowPoints,
@@ -32,6 +33,8 @@ import {
 export interface CanvasHit {
   x: number
   y: number
+  /** Ctrl/Cmd/Shift held — extend the selection instead of replacing it. */
+  additive: boolean
 }
 
 export interface TopologyCanvasHandle {
@@ -50,6 +53,7 @@ interface TopologyCanvasViewProps {
    *  where a 3000-bus feeder fits on screen the labels overlap into noise
    *  anyway, and text is by far the most expensive thing to rasterize. */
   detailed: boolean
+  selection?: TopologySelection
   onBusClick?: (busId: number, hit: CanvasHit) => void
   onLineClick?: (lineId: number, hit: CanvasHit) => void
   onSwitchToggle?: (switchId: number, closed: boolean) => void
@@ -77,6 +81,7 @@ const PALETTE_VARS = [
   'status-good',
   'status-warn',
   'status-info',
+  'selection',
   'method-ldf',
   'method-dc',
 ] as const
@@ -122,6 +127,7 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
       result,
       voltageLimits,
       detailed,
+      selection,
       onBusClick,
       onLineClick,
       onSwitchToggle,
@@ -175,6 +181,7 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
       result,
       voltageLimits,
       detailed,
+      selection,
       busResults,
       lineResults,
       maxAbsFlow,
@@ -187,6 +194,7 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
       result,
       voltageLimits,
       detailed,
+      selection,
       busResults,
       lineResults,
       maxAbsFlow,
@@ -208,6 +216,7 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
         result: res,
         voltageLimits: limits,
         detailed: showDetail,
+        selection: sel,
         busResults: busRes,
         lineResults: lineRes,
         maxAbsFlow: maxFlow,
@@ -365,6 +374,46 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
         ctx.restore()
       }
 
+      // ── Selection halo: selected branches under the buses, selected buses
+      // ringed on top. Sized in screen pixels (divided by t.k) so it stays
+      // visible when a large feeder is zoomed out. ─────────────────────────
+      if (sel && (sel.lines.size > 0 || sel.buses.size > 0)) {
+        ctx.save()
+        ctx.strokeStyle = c.selection
+        ctx.lineCap = 'round'
+        if (sel.lines.size > 0) {
+          const path = new Path2D()
+          for (const link of links) {
+            if (!sel.lines.has(link.id)) continue
+            const from = nodeById.get(link.from)
+            const to = nodeById.get(link.to)
+            if (!from || !to || !segmentVisible(from.x, from.y, to.x, to.y)) continue
+            if (mode === 'tree') {
+              const pts = elbowPoints(from, to, orient)
+              path.moveTo(pts[0][0], pts[0][1])
+              for (let i = 1; i < pts.length; i++) path.lineTo(pts[i][0], pts[i][1])
+            } else {
+              path.moveTo(from.x, from.y)
+              path.lineTo(to.x, to.y)
+            }
+          }
+          ctx.lineWidth = 4 / t.k
+          ctx.stroke(path)
+        }
+        if (sel.buses.size > 0) {
+          ctx.lineWidth = 3 / t.k
+          const ring = new Path2D()
+          for (const node of nodes) {
+            if (!sel.buses.has(node.id) || !visible(node.x, node.y)) continue
+            const r = Math.max(nodeRadius(node), 3 / t.k) + 4 / t.k
+            ring.moveTo(node.x + r, node.y)
+            ring.arc(node.x, node.y, r, 0, Math.PI * 2)
+          }
+          ctx.stroke(ring)
+        }
+        ctx.restore()
+      }
+
       // ── Buses ─────────────────────────────────────────────────────────
       if (mode === 'tree') {
         drawTreeBuses(ctx, nodes, c, showDetail, res, busRes, voltageColor, orient, visible, minStroke)
@@ -470,7 +519,7 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
       if (!canvas) return
       const zoom = d3
         .zoom<HTMLCanvasElement, unknown>()
-        .scaleExtent([0.02, 4])
+        .scaleExtent([0.02, 50])
         .on('zoom', (event) => {
           transformRef.current = event.transform
           scheduleDraw()
@@ -547,9 +596,10 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
         const k = transformRef.current.k
         const { nodeById, links, glyphSwitches } = layoutRef.current
 
+        const additive = event.ctrlKey || event.metaKey || event.shiftKey
         const node = findNode(quadtreeRef.current, lx, ly, 24 / k)
         if (node && onBusClick) {
-          onBusClick(node.id, { x: px, y: py })
+          onBusClick(node.id, { x: px, y: py, additive })
           return
         }
         // Switch glyphs are small; give them the same forgiving radius the
@@ -569,7 +619,7 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
         if (!onLineClick) return
         const lineTol = 7 / k
         const link = findLink(links, nodeById, lx, ly, lineTol, viewMode === 'tree' ? orientation : null)
-        if (link) onLineClick(link.id, { x: px, y: py })
+        if (link) onLineClick(link.id, { x: px, y: py, additive })
       }
       canvas.addEventListener('click', onClick)
       return () => canvas.removeEventListener('click', onClick)
@@ -620,7 +670,7 @@ export const TopologyCanvasView = forwardRef<TopologyCanvasHandle, TopologyCanva
         fit()
       }
       scheduleDraw()
-    }, [layout, result, detailed, viewMode, orientation, voltageLimits, fitKey, fit, scheduleDraw, rebuildQuadtree])
+    }, [layout, result, detailed, selection, viewMode, orientation, voltageLimits, fitKey, fit, scheduleDraw, rebuildQuadtree])
 
     // Clearing the ref matters as much as cancelling the frame: scheduleDraw
     // treats a non-null frameRef as "a draw is already queued" and bails.
