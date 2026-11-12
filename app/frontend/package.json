@@ -8,7 +8,8 @@
     "build": "tsc -b --noCheck && vite build",
     "typecheck": "tsc -b --noEmit",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:galeria": "vite build --mode galeria && node scripts/inline-galeria.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
@@ -43,6 +44,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.0.4",
     "d3": "^7.9.0",
+    "elkjs": "^0.12.0",
     "embla-carousel-react": "^8.5.2",
     "input-otp": "^1.4.2",
     "katex": "^0.16.11",

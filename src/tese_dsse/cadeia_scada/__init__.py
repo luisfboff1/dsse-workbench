@@ -19,7 +19,7 @@ recebe o que a camada anterior produziu:
                                                      ->  process_topology
 
 Plano completo, fases e decisoes em
-`docs/planejamento/cadeia_operacional_scada.md`.
+`temas/cadeia_scada/cadeia_operacional_scada.md`.
 """
 
 from __future__ import annotations

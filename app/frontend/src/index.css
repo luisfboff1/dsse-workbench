@@ -137,17 +137,23 @@
 
 /* Selection highlight for the SVG topology diagram. The canvas renderer draws
    its own halo (see TopologyCanvasView); both read --color-selection. */
-.bus-node.is-selected {
-  filter: drop-shadow(0 0 3px var(--color-selection)) drop-shadow(0 0 6px var(--color-selection));
-}
+/* No drop-shadow here: an SVG filter is applied in the zoomed coordinate
+   space, so its blur radius grew with the zoom. */
 .bus-node.is-selected .scalable-node > circle:first-of-type,
 .bus-node.is-selected > rect,
 .bus-node.is-selected > line:first-of-type {
   stroke: var(--color-selection);
-  stroke-width: 3px;
+  stroke-width: 4px;
 }
 .link-el.is-selected {
   stroke: var(--color-selection);
   stroke-opacity: 1;
   stroke-width: 4px;
+}
+@keyframes temporal-flow-travel {
+  to { stroke-dashoffset: -30; }
+}
+.temporal-flow-motion { animation: temporal-flow-travel 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .temporal-flow-motion { animation: none; }
 }

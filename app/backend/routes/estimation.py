@@ -61,7 +61,7 @@ class EstimationRequest(BaseModel):
         le=1.0,
         description="Desvio relativo do ruído gaussiano (ex: 0.01 = 1%)",
     )
-    sigma_min: float = Field(1e-4, ge=1e-6, description="Sigma mínimo para medições")
+    sigma_min: float = Field(0.005, ge=1e-6, description="Piso de sigma em pu da base (regra_sigma_min.md)")
     seed: int | None = Field(None, description="Seed para reprodutibilidade")
     trace: bool = Field(
         False,
@@ -171,7 +171,7 @@ def preview_measurements(req: EstimationRequest) -> dict:
     _H, _c, z_true, sigma, labels, meta = configured_dc_rows(
         model, pp_to_frontend, non_slack_pp, kind_by_bus,
         z_true_full, angle_true_by_pp, req.noise_level, req.sigma_min,
-        line_kind_by_pp, pp_line_to_frontend,
+        line_kind_by_pp, pp_line_to_frontend, net=net,
     )
     # Same call (sample_noisy_measurement) as /run — with the same seed this
     # reproduces exactly the z_noisy /run would use.
@@ -288,7 +288,7 @@ def _run_dc_wls(req: EstimationRequest) -> dict:
     H_final, c_final, z_true_final, sigma_final, labels_final, meta_final = configured_dc_rows(
         model, pp_to_frontend, non_slack_pp, kind_by_bus,
         z_true_full, angle_true_by_pp, req.noise_level, req.sigma_min,
-        line_kind_by_pp, pp_line_to_frontend,
+        line_kind_by_pp, pp_line_to_frontend, net=net,
     )
 
     n = len(non_slack_pp)
@@ -553,8 +553,8 @@ def _run_ac_gn_wls(req: EstimationRequest) -> dict:
     angle_std_by_pp: dict[int, float] = {}
     vm_std_by_pp: dict[int, float] = {}
     try:
-        H_ac = model.jacobian_finite_difference(x_hat)
-        W_ac = np.diag(1.0 / np.square(sigma))
+        H_ac = model.jacobian(x_hat, sparse=True)
+        W_ac = 1.0 / np.square(sigma)  # vetor: diagonal de W
         sigma_x, _ = state_uncertainty(H_ac, W_ac, confidence=0.95)
         for bus in model.angle_buses:
             angle_std_by_pp[int(bus)] = float(

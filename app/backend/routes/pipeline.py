@@ -42,7 +42,7 @@ from ..services.dc_measurement_model import (
     kind_by_pp_line,
     solve_ac_ground_truth,
 )
-from ..services.network_builder import build_net_from_frontend, line_id_map_from_topology
+from ..services.network_builder import build_net_from_frontend, line_id_map_from_topology, trafo_frontend_ids
 from ..paths import ensure_src_on_path
 
 ensure_src_on_path()
@@ -115,7 +115,7 @@ class PipelineRequest(BaseModel):
         ),
     )
     noise_level: float = Field(0.01, ge=0.0, le=1.0)
-    sigma_min: float = Field(1e-4, ge=1e-6)
+    sigma_min: float = Field(0.005, ge=1e-6)
     seed: int | None = None
     add_noise: bool = Field(
         True,
@@ -568,8 +568,13 @@ def _believed_net(
     """
     open_frontend = set(topo_snapshot.open_line_ids)
     open_lines = {line_id_map[i] for i in open_frontend if i in line_id_map}
-    if not open_lines:
-        return net, open_lines
+    # ramo-trafo (tap fora do nominal) nao esta em line_id_map: e um net.trafo
+    trafo_by_frontend = {f: t for t, f in trafo_frontend_ids(net).items()}
+    open_trafos = {trafo_by_frontend[i] for i in open_frontend if i in trafo_by_frontend}
+    # devolvido no espaco de ids do FRONTEND (linhas e trafos juntos)
+    open_ids = {i for i in open_frontend if i in line_id_map or i in trafo_by_frontend}
+    if not open_ids:
+        return net, open_ids
 
     import copy
 
@@ -579,6 +584,8 @@ def _believed_net(
     for line_idx in open_lines:
         if line_idx in believed.line.index:
             believed.line.at[line_idx, "in_service"] = False
+    for t in open_trafos:
+        believed.trafo.at[t, "in_service"] = False
     try:
         pp.runpp(believed, algorithm="nr", max_iteration=50, numba=False)
     except Exception:
@@ -589,9 +596,9 @@ def _believed_net(
             "estimation", now_s, "MODEL",
             "The reconstructed network does not converge in the power flow: the "
             "model handed to the estimator is physically inconsistent.",
-            level="error", open_line_ids=sorted(open_lines),
+            level="error", open_line_ids=sorted(open_ids),
         )
-    return believed, open_lines
+    return believed, open_ids
 
 
 def _run_control_layer(
@@ -685,7 +692,7 @@ def _estimate(
         before = len(usable)
         usable = [
             r for r in usable
-            if r.line_id is None or line_id_map.get(int(r.line_id)) not in open_lines
+            if r.line_id is None or int(r.line_id) not in open_lines  # ids do frontend
         ]
         discarded = before - len(usable)
         if discarded:

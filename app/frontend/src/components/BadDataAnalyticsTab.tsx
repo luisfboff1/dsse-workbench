@@ -1,6 +1,6 @@
 /**
  * BadDataAnalyticsTab - complete interactive Bad Data analysis.
- * Inspirado no notebook 5_BUS_IEEE_bad_data_analytics.ipynb (Bretas 2013/2018).
+ * Inspirado no notebook 2026-06-18_5_BUS_IEEE_bad_data_analytics.ipynb (Bretas 2013/2018).
  *
  * Sections:
  *  1. Geometry Explorer  - analyzes K and UI for all measurements before attack
@@ -35,6 +35,7 @@ import {
   type BadDataGeometryResult, type BadDataGeometryMeasurement, type BadDataResult,
 } from '@/lib/api'
 import { MeasurementsSummaryCard } from '@/components/MeasurementsSummaryCard'
+import { OfflineStageCard } from '@/components/OfflineStageCard'
 
 const kiiChartConfig = {
   K_ii: { label: 'K_ii', color: 'var(--color-status-info)' },
@@ -95,7 +96,7 @@ function kiiHex(k: number): string {
 // sqrt((1-K_ii)/K_ii), since UI_i = K_ii/(1-K_ii) = 1/II_i^2 — this exact
 // relation is what bad_data.py's composed_normalized_error() and the
 // extended-Gauss objective (1+1/II_i^2)=(1+UI_i) already use, cross-checked
-// against docs/estudos/estimacao_estado/literatura/bretas2018_extended_gauss_cme.md
+// against temas/revisao_bibliografica/literatura/bretas2018_extended_gauss_cme.md
 // and pipeline_bad_data_8_combinacoes.md — both state the same formula.
 // Pure frontend derivation, no new API field needed (UI is already returned).
 // II → 0 as K_ii → 1 (fully masked, the measurement carries no detectable
@@ -481,7 +482,7 @@ function DetectionExplainer({ result }: { result: BadDataResult }) {
         </div>
         {converged && (
           <div className="text-status-good space-y-1">
-            <div>✓ Pipeline {result.config.detection}+{result.config.identification}+{result.config.correction} detected, acted ({result.pipeline.actions.join('→')}), and converged (J_final={result.pipeline.J_final.toFixed(3)} &lt; threshold={result.pipeline.threshold.toFixed(3)}).</div>
+            <div>✓ Pipeline {result.config.detection}+{result.config.identification}{result.config.identification === 'glrt' ? ' (correction by verdict)' : `+${result.config.correction}`} detected, acted ({result.pipeline.actions.join('→')}), and converged (J_final={result.pipeline.J_final.toFixed(3)} &lt; threshold={(result.pipeline.threshold?.toFixed(3) ?? "—")}).</div>
             <div>Flagged index/indices: <strong>{result.pipeline.flaggedIndices.join(', ')}</strong>
               {correctlyFixed && ' — correct ✓'}
               {!correctlyFixed && injIdx != null && result.pipeline.flaggedIndices.length > 0 && ' — wrong index ✗'}
@@ -522,7 +523,7 @@ interface BadDataAnalyticsTabProps {
 export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
   // ── config state ────────────────────────────────────────────────────────
   const [noiseLevel, setNoiseLevel] = useState(0.01)
-  const [sigmaMin, setSigmaMin] = useState(0.001)   // mesmo que o notebook: SIGMA_MIN = 0.001
+  const [sigmaMin, setSigmaMin] = useState(0.005)   // piso padrão do repo (docs/governanca/regra_sigma_min.md), igual aos notebooks
   // z = z_true + noise (default) vs z = z_true exactly. Default true matches
   // Bretas et al. (2017)'s own practice (noise added in every simulation) and
   // general SE validation practice; turn off to isolate one injected effect
@@ -548,17 +549,31 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
   // What gets attacked: a measurement (z), a line parameter (H/h(x)), or
   // both at once — 'parameter'/'both' need method='ac' (nonlinear pipeline,
   // rebuilt every iteration) — see ac_bad_data.run_ac_bad_data_pipeline() /
-  // docs/estudos/estimacao_estado/literatura/bretas2017_malicious_data_innovation.md.
-  const [attackTarget, setAttackTarget] = useState<'measurement' | 'parameter' | 'both'>('measurement')
+  // temas/revisao_bibliografica/literatura/bretas2017_malicious_data_innovation.md.
+  const [attackTarget, setAttackTarget] = useState<'measurement' | 'parameter' | 'both' | 'topology'>('measurement')
   const [attackLineId, setAttackLineId] = useState<number | null>(topology.lines[0]?.id ?? null)
+  // Topology error (AC): a switch status in the field differs from the operator's
+  // model. 'close_tie' is the distribution case (tie switch open in the model,
+  // closed in the field); 'open_line' islands a radial feeder, the backend refuses.
+  const [topoMode, setTopoMode] = useState<'open_line' | 'close_tie'>('close_tie')
+  const [tieFrom, setTieFrom] = useState<number | null>(null)
+  const [tieTo, setTieTo] = useState<number | null>(null)
+  const isParamAttack = attackTarget === 'parameter' || attackTarget === 'both'
+  const isMeasAttack = attackTarget === 'measurement' || attackTarget === 'both'
   // Assumed relative uncertainty ("sigma") of a line parameter — the article
   // (Bretas et al. 2017) only defines k·sigma for measurement error
   // (eq. 18-19), not for a parameter, so this is an explicit assumption.
   const [paramSigmaPct, setParamSigmaPct] = useState(0.01)
   const [paramNSigmas, setParamNSigmas] = useState(10.0)
+  // Error model: 'rxc' (r/x/c × factor, line length) or 'admittance' (g, b, b_sh
+  // each off by t, field = model·(1+t) — the loop notebook's convention).
+  const [paramMode, setParamMode] = useState<'rxc' | 'admittance'>('rxc')
+  const [tG, setTG] = useState(-0.3)
+  const [tB, setTB] = useState(-0.3)
+  const [tBsh, setTBsh] = useState(-0.3)
   const [paramSymmetric, setParamSymmetric] = useState(true)
   const [detection, setDetection] = useState<'residual' | 'cme'>('residual')
-  const [identification, setIdentification] = useState<'lnr' | 'cme' | 'by_line'>('lnr')
+  const [identification, setIdentification] = useState<'lnr' | 'cme' | 'by_line' | 'glrt'>('lnr')
   const [correction, setCorrection] = useState<'remove' | 'ztrue' | 'by_parameter'>('remove')
 
   // ── results state ───────────────────────────────────────────────────────
@@ -604,7 +619,10 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
   const attackReady =
     (attackTarget === 'measurement' && selectedMeasIdx !== null) ||
     (attackTarget === 'parameter' && attackLineId !== null) ||
-    (attackTarget === 'both' && selectedMeasIdx !== null && attackLineId !== null)
+    (attackTarget === 'both' && selectedMeasIdx !== null && attackLineId !== null) ||
+    (attackTarget === 'topology' && (topoMode === 'open_line'
+      ? attackLineId !== null
+      : tieFrom !== null && tieTo !== null && tieFrom !== tieTo))
 
   async function runDetection() {
     if (!attackReady) return
@@ -618,6 +636,8 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
         bad_data_index: selectedMeasIdx, bad_data_magnitude: badDataMag,
         attack_line_id: attackLineId, attack_param_sigma_pct: paramSigmaPct,
         attack_param_n_sigmas: paramNSigmas, attack_param_symmetric: paramSymmetric,
+        attack_param_mode: paramMode, attack_param_t_g: tG, attack_param_t_b: tB, attack_param_t_bsh: tBsh,
+        attack_topology_mode: topoMode, attack_tie_from_bus: tieFrom, attack_tie_to_bus: tieTo,
         detection, identification, correction, alpha, z_true_method: zTrueMethod,
         add_noise: addNoise,
       }
@@ -794,7 +814,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                 onChange={(e) => setNoiseLevel(parseFloat(e.target.value))} className="h-8 text-xs" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">σ_min (floor)</Label>
+              <Label className="text-xs" title="Floor = σ_min × meter full scale (2|S| of the measured point). Independent of the network base.">σ_min (× full scale)</Label>
               <Input type="number" value={sigmaMin} step={0.0005} min={1e-6} max={0.1}
                 onChange={(e) => setSigmaMin(parseFloat(e.target.value))} className="h-8 text-xs mono" />
             </div>
@@ -822,7 +842,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
               if (v === 'dc') {
                 // parameter attacks and by_line/by_parameter need the AC nonlinear pipeline
                 setAttackTarget('measurement')
-                if (identification === 'by_line') setIdentification('lnr')
+                if (identification === 'by_line' || identification === 'glrt') setIdentification('lnr')
                 if (correction === 'by_parameter') setCorrection('remove')
               }
             }}>
@@ -1045,17 +1065,66 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                   <SelectItem value="measurement" className="text-xs">Measurement (z)</SelectItem>
                   <SelectItem value="parameter" className="text-xs" disabled={method !== 'ac'}>Line parameter (H/h(x)) — AC only</SelectItem>
                   <SelectItem value="both" className="text-xs" disabled={method !== 'ac'}>Both — AC only</SelectItem>
+                  <SelectItem value="topology" className="text-xs" disabled={method !== 'ac'}>Topology (switch status) — AC only</SelectItem>
                 </SelectContent>
               </Select>
               <span className="text-[10px] text-muted-foreground">
+                {attackTarget === 'topology' && (topoMode === 'close_tie'
+                  ? "A tie switch is open in the operator's model but closed in the field; measurements come from the field. Use GLRT + t̂ to name the switch."
+                  : 'A line is open in the field but closed in the model. On a radial feeder this islands buses: use the tie switch case instead.')}
                 {attackTarget === 'measurement' && 'Classic gross error: one z shifted by k×σ.'}
-                {attackTarget === 'parameter' && "r/x/c of a line wrong in the estimator's model, measurements stay clean — Bretas et al. 2017."}
+                {attackTarget === 'parameter' && (paramMode === 'rxc'
+                  ? "r/x/c of a line wrong in the estimator's model, measurements stay clean — Bretas et al. 2017."
+                  : "The line's admittance in the field differs from the model (the topology); measurements come from the field — the loop notebook's setup.")}
                 {attackTarget === 'both' && "Arturo's ambiguity check: several measurements shifted at once can look like a parameter error — compare here."}
               </span>
             </div>
 
+            {/* Topology error: which switch */}
+            {attackTarget === 'topology' && (
+              <div className="flex flex-wrap gap-2 items-center p-2 rounded-md border border-dashed border-status-warn/50 bg-status-warn/5 text-xs mono">
+                <span className="font-semibold">Error:</span>
+                <Select value={topoMode} onValueChange={(v) => setTopoMode(v as typeof topoMode)}>
+                  <SelectTrigger className="h-7 text-xs w-80 max-w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="close_tie" className="text-xs">Tie switch closed (open in model)</SelectItem>
+                    <SelectItem value="open_line" className="text-xs">Line open (closed in model)</SelectItem>
+                  </SelectContent>
+                </Select>
+                {topoMode === 'open_line' ? (
+                  <Select value={attackLineId?.toString() ?? ''} onValueChange={(v) => setAttackLineId(parseInt(v))}>
+                    <SelectTrigger className="h-7 text-xs w-40"><SelectValue placeholder="select a line" /></SelectTrigger>
+                    <SelectContent>
+                      {topology.lines.map((l) => (
+                        <SelectItem key={l.id} value={l.id.toString()} className="text-xs">
+                          L{l.id} (bus {l.from} ↔ bus {l.to})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <>
+                    {([['between bus', tieFrom, setTieFrom], ['and bus', tieTo, setTieTo]] as const).map(([lab, val, set]) => (
+                      <span key={lab} className="flex items-center gap-1">
+                        <span>{lab}</span>
+                        <Select value={val?.toString() ?? ''} onValueChange={(v) => set(parseInt(v))}>
+                          <SelectTrigger className="h-7 text-xs w-24"><SelectValue placeholder="bus" /></SelectTrigger>
+                          <SelectContent>
+                            {topology.buses.map((b) => (
+                              <SelectItem key={b.id} value={b.id.toString()} className="text-xs">{b.id}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </span>
+                    ))}
+                    <span className="text-[10px] text-muted-foreground">(two buses not already connected; the switch takes the parameters of a line at the first bus)</span>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Selected measurement info */}
-            {attackTarget !== 'parameter' && (
+            {isMeasAttack && (
               selectedMeas ? (
                 <div className="flex flex-wrap gap-2 items-center p-2 rounded-md border border-dashed border-accent/50 bg-accent/5 text-xs mono">
                   <span className="font-semibold">Target:</span>
@@ -1075,7 +1144,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
             )}
 
             {/* Line selector for parameter attacks */}
-            {attackTarget !== 'measurement' && (
+            {isParamAttack && (
               <div className="flex flex-wrap gap-2 items-center p-2 rounded-md border border-dashed border-status-warn/50 bg-status-warn/5 text-xs mono">
                 <span className="font-semibold">Line:</span>
                 <Select value={attackLineId?.toString() ?? ''} onValueChange={(v) => setAttackLineId(parseInt(v))}>
@@ -1088,16 +1157,18 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                     ))}
                   </SelectContent>
                 </Select>
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input type="checkbox" checked={paramSymmetric} onChange={(e) => setParamSymmetric(e.target.checked)} className="h-3 w-3" />
-                  symmetric (r, x, c)
-                </label>
+                {paramMode === 'rxc' && (
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" checked={paramSymmetric} onChange={(e) => setParamSymmetric(e.target.checked)} className="h-3 w-3" />
+                    symmetric (r, x, c)
+                  </label>
+                )}
               </div>
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               {/* Error magnitude — measurement */}
-              {attackTarget !== 'parameter' && (
+              {isMeasAttack && (
                 <div className="space-y-2">
                   <Label className="text-xs">
                     Measurement error magnitude: <strong>{badDataMag.toFixed(1)}×σ</strong>
@@ -1112,7 +1183,38 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
               )}
 
               {/* Parameter error magnitude */}
-              {attackTarget !== 'measurement' && (
+              {isParamAttack && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Parameter error model</Label>
+                  <Select value={paramMode} onValueChange={(v) => setParamMode(v as 'rxc' | 'admittance')}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="rxc" className="text-xs">r, x, c × factor — line length wrong (Bretas 2017)</SelectItem>
+                      <SelectItem value="admittance" className="text-xs">g, b, b_sh each off by t — admittance (notebook, Zou 2020)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {isParamAttack && paramMode === 'admittance' && (
+                <div className="space-y-2">
+                  <Label className="text-xs">
+                    The topology is the operator's model; in the field each term is model·(1 + t) — the same t the GLRT's t̂ estimates (−0.7 = the field has 30% of what the model uses)
+                  </Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([['t (g)', tG, setTG], ['t (b)', tB, setTB], ['t (b_sh)', tBsh, setTBsh]] as const).map(([lab, val, set]) => (
+                      <div key={lab} className="space-y-0.5">
+                        <span className="text-[10px] text-muted-foreground mono">{lab}</span>
+                        <Input type="number" value={val} step={0.05} min={-0.95} max={10}
+                          onChange={(e) => set(parseFloat(e.target.value))} className="h-7 text-xs mono" />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Unbalanced errors (different t per term) follow Zou et al. 2020 and Bretas et al. (PowerTech 2025), e.g. g −5.3%, b +7.0%, b_sh +6.8%.
+                  </p>
+                </div>
+              )}
+              {isParamAttack && paramMode === 'rxc' && (
                 <div className="space-y-2">
                   <Label className="text-xs">
                     Parameter error magnitude: <strong>{paramNSigmas.toFixed(1)}×σ_param</strong>
@@ -1130,8 +1232,10 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
               )}
 
               {/* Pipeline selectors */}
-              <div className={`space-y-2 ${attackTarget === 'both' ? 'sm:col-span-2' : ''}`}>
-                <div className="grid grid-cols-3 gap-2">
+              <div className={`space-y-2 ${attackTarget === 'both' || attackTarget === 'topology' ? 'sm:col-span-2' : ''}`}>
+                {/* min-w-0 + w-full: a long value ("GLRT + t̂ … corrects by type") used to
+                    push its trigger over the next column on narrow windows */}
+                <div className="grid grid-cols-[1fr_1.7fr_1fr] gap-2 [&_[data-slot=select-trigger]]:w-full [&_[data-slot=select-trigger]]:min-w-0 [&>div]:min-w-0">
                   <div className="space-y-1">
                     <Label className="text-xs">Detection</Label>
                     <Select value={detection} onValueChange={(v) => setDetection(v as any)}>
@@ -1150,12 +1254,13 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                         <SelectItem value="lnr" className="text-xs">LNR</SelectItem>
                         <SelectItem value="cme" className="text-xs">CME_N</SelectItem>
                         <SelectItem value="by_line" className="text-xs" disabled={method !== 'ac'}>By line (AC) — p. 213</SelectItem>
+                        <SelectItem value="glrt" className="text-xs" disabled={method !== 'ac'}>GLRT + t̂ (AC)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Correction</Label>
-                    <Select value={correction} onValueChange={(v) => setCorrection(v as any)}>
+                    <Select value={correction} onValueChange={(v) => setCorrection(v as any)} disabled={identification === 'glrt'}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="remove" className="text-xs">Remove</SelectItem>
@@ -1165,6 +1270,9 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                     </Select>
                   </div>
                 </div>
+                {identification === 'glrt' && (
+                  <p className="text-[10px] text-muted-foreground">GLRT + t̂: the correction follows each iteration's verdict (measurement → CNE, parameter → (1 + t̂), topology → open/close the line), so "Correction" is not used.</p>
+                )}
                 {correction === 'by_parameter' && identification !== 'by_line' && (
                   <p className="text-[10px] text-destructive">correction='by_parameter' requires identification='By line'.</p>
                 )}
@@ -1195,6 +1303,10 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
         </Card>
       )}
 
+      {geo && method === 'ac' && (
+        <OfflineStageCard topology={topology} noiseLevel={noiseLevel} sigmaMin={sigmaMin} />
+      )}
+
       {/* ═══ STEP 3: SINGLE PIPELINE RESULTS ══════════════════════════════ */}
       {result && (
         <div className="space-y-4">
@@ -1214,7 +1326,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                   <BarChart
                     data={[
                       { name: 'J_detection₀', value: result.J_detection_initial, fill: result.J_detection_initial > result.chi2_threshold_initial ? 'var(--color-destructive)' : 'var(--color-status-info)' },
-                      { name: 'J_final', value: result.pipeline.J_final, fill: result.pipeline.J_final > result.pipeline.threshold ? 'var(--color-destructive)' : 'var(--color-status-good)' },
+                      { name: 'J_final', value: result.pipeline.J_final, fill: result.pipeline.J_final > (result.pipeline.threshold ?? Infinity) ? 'var(--color-destructive)' : 'var(--color-status-good)' },
                       { name: 'χ² threshold₀', value: result.chi2_threshold_initial, fill: 'var(--color-muted-foreground)' },
                     ]}
                     margin={{ top: 4, right: 10, left: -10, bottom: 5 }}
@@ -1226,7 +1338,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                     <ChartTooltip content={<ChartTooltipContent formatter={(v) => Number(v).toFixed(3)} />} />
                     <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={56}>
                       {[result.J_detection_initial, result.pipeline.J_final, result.chi2_threshold_initial].map((_, i) => (
-                        <Cell key={i} fill={i === 0 ? (result.J_detection_initial > result.chi2_threshold_initial ? 'var(--color-destructive)' : 'var(--color-status-info)') : i === 1 ? (result.pipeline.J_final > result.pipeline.threshold ? 'var(--color-destructive)' : 'var(--color-status-good)') : 'var(--color-muted-foreground)'} />
+                        <Cell key={i} fill={i === 0 ? (result.J_detection_initial > result.chi2_threshold_initial ? 'var(--color-destructive)' : 'var(--color-status-info)') : i === 1 ? (result.pipeline.J_final > (result.pipeline.threshold ?? Infinity) ? 'var(--color-destructive)' : 'var(--color-status-good)') : 'var(--color-muted-foreground)'} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -1266,6 +1378,66 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
             </Card>
           )}
 
+          {/* GLRT + t̂ steps (AC, identification='glrt'): one row per iteration that
+              acted — verdict, the element, t̂ with its 95% CI and the correction. */}
+          {result.pipeline.glrtSteps && result.pipeline.glrtSteps.length > 0 && (
+            <Card>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Lightning weight="fill" className="text-status-warn" />
+                  Step 3a1b — GLRT + t̂: verdict and correction per iteration
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Level 0: the residual is compared with each line's fingerprint S_ℓ and with "one bad meter" on the same
+                  ΔJ/k scale. Level 2: t̂ = c/(1 − cδ_ℓ) — −1 in the 95% CI ⇒ topology (open, or close a line that is out
+                  of the model); CI inside (−0.9, 0.9) ⇒ parameter, corrected by (g, b, b_sh) ← (1 + t̂)·(g, b, b_sh);
+                  otherwise inconclusive (nothing corrected). Measurements: z ← z − CNE·σ.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-4">
+                <TableCard label="GLRT steps" maxHeight="16rem">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="mono text-xs">Iter</TableHead>
+                      <TableHead className="mono text-right text-xs">J</TableHead>
+                      <TableHead className="mono text-right text-xs">χ² threshold</TableHead>
+                      <TableHead className="mono text-xs">Verdict</TableHead>
+                      <TableHead className="mono text-xs">Element</TableHead>
+                      <TableHead className="mono text-right text-xs">t̂</TableHead>
+                      <TableHead className="mono text-right text-xs">95% CI</TableHead>
+                      <TableHead className="mono text-xs">Correction</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {result.pipeline.glrtSteps.map((st) => (
+                      <TableRow key={st.iter}>
+                        <TableCell className="text-xs mono">{st.iter}</TableCell>
+                        <TableCell className="text-right text-xs mono">{st.J.toFixed(1)}</TableCell>
+                        <TableCell className="text-right text-xs mono">{st.threshold.toFixed(1)}</TableCell>
+                        <TableCell className="text-xs mono">
+                          <Badge variant={st.type === 'inconclusive' ? 'secondary' : 'outline'} className="text-[10px] px-1.5 py-0">{st.type}</Badge>
+                        </TableCell>
+                        <TableCell className="text-xs mono">{st.type === 'measurement' ? (st.measurementLabel ?? '—') : st.lineId !== null ? `L${st.lineId}` : '—'}</TableCell>
+                        <TableCell className="text-right text-xs mono">{st.tHat !== null ? st.tHat.toFixed(3) : '—'}</TableCell>
+                        <TableCell className="text-right text-xs mono">
+                          {st.tHatCI ? `[${st.tHatCI.map((v) => (v === null ? '∞' : v.toFixed(3))).join(', ')}]` : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs mono">
+                          {st.action.startsWith('corrected_measurement') ? 'z ← z − CNE·σ'
+                            : st.action.startsWith('corrected_parameter') ? `L${st.lineId} × (1 + t̂)`
+                            : st.action.startsWith('opened') ? `open L${st.lineId}, drop its flows`
+                            : st.action.startsWith('closed') ? `close L${st.lineId}`
+                            : st.action.startsWith('topology_correction_failed') ? 'open/close failed (island?) — stopped'
+                            : 'none — stopped'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </TableCard>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Parameter attack / correction summary + line ranking (AC only) */}
           {result.lineRanking && (
             <Card>
@@ -1279,11 +1451,24 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4 space-y-3">
+                {result.topologyAttack && (
+                  <Alert className="border-status-warn/50 bg-status-warn/5">
+                    <AlertDescription className="text-xs mono">
+                      <span className="font-semibold">Injected topology error — </span>
+                      {result.topologyAttack.mode === 'close_tie'
+                        ? <>tie switch L{result.topologyAttack.lineId} (bus {result.topologyAttack.fromBus} ↔ bus {result.topologyAttack.toBus}) closed in the field, open in the model (not drawn in Topology)</>
+                        : <>L{result.topologyAttack.lineId} (bus {result.topologyAttack.fromBus} ↔ bus {result.topologyAttack.toBus}) open in the field, closed in the model</>}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {result.parameterAttack && (
                   <Alert className="border-status-warn/50 bg-status-warn/5">
                     <AlertDescription className="text-xs mono space-y-1">
                       <div className="font-semibold">
-                        Injected parameter attack — L{result.parameterAttack.lineId} (bus {result.parameterAttack.fromBus} ↔ bus {result.parameterAttack.toBus}), factor ×{result.parameterAttack.factor.toFixed(4)}
+                        Injected parameter attack — L{result.parameterAttack.lineId} (bus {result.parameterAttack.fromBus} ↔ bus {result.parameterAttack.toBus}),
+                        {result.parameterAttack.tField
+                          ? <> field = model·(1+t): t_g = {result.parameterAttack.tField.g}, t_b = {result.parameterAttack.tField.b}, t_bsh = {result.parameterAttack.tField.bsh}</>
+                          : <> factor ×{result.parameterAttack.factor.toFixed(4)}</>}
                       </div>
                       <div className="grid grid-cols-3 gap-2">
                         <span>r: {result.parameterAttack.trueParams.r.toFixed(5)} → <strong className="text-destructive">{result.parameterAttack.wrongParams.r.toFixed(5)}</strong></span>
@@ -1334,7 +1519,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
               <CardHeader className="p-4 pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <CheckCircle weight="fill" className="text-status-good" />
-                  Step 3a3 — Parameter Correction (eq. 16)
+                  Step 3a3 — Parameter Correction ({result.parameterCorrection.tHat != null ? 't̂' : 'eq. 16'})
                 </CardTitle>
                 <CardDescription className="text-xs">
                   L{result.parameterCorrection.lineId} — was wrong, corrected in a single step, no measurement discarded.
@@ -1347,12 +1532,19 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                       Before: J = <strong className="text-destructive">{result.J_detection_initial.toFixed(3)}</strong>
                       {' '}({result.J_detection_initial > result.chi2_threshold_initial ? 'detected' : 'not detected'}, χ²={result.chi2_threshold_initial.toFixed(3)})
                       {' '}→ After: J = <strong className="text-status-good">{result.pipeline.J_final.toFixed(3)}</strong>
-                      {' '}({result.pipeline.detected ? 'still detected' : 'not detected'}, χ²={result.pipeline.threshold.toFixed(3)})
+                      {' '}({result.pipeline.detected ? 'still detected' : 'not detected'}, χ²={(result.pipeline.threshold?.toFixed(3) ?? "—")})
                     </div>
+                    {result.parameterCorrection.tHat != null ? (
+                    <div>
+                      Equation: <code>(g, b, b_sh) ← (1 + t̂)·(g, b, b_sh)</code>, t̂ = <strong>{result.parameterCorrection.tHat.toFixed(4)}</strong>
+                      {' '}→ x_C = {result.parameterCorrection.wrongParams.x.toFixed(5)} / (1 + t̂) = <strong>{result.parameterCorrection.correctedParams.x.toFixed(5)}</strong>
+                    </div>
+                    ) : (
                     <div>
                       Equation: <code>p_C = p_E · (1 + CNE/100)</code>, CNE = <strong>{result.parameterCorrection.cneUsed?.toFixed(3) ?? '—'}</strong>
                       {' '}→ x_C = {result.parameterCorrection.wrongParams.x.toFixed(5)} × (1 {(result.parameterCorrection.cneUsed ?? 0) >= 0 ? '+' : '-'} {Math.abs(result.parameterCorrection.cneUsed ?? 0).toFixed(3)}/100) = <strong>{result.parameterCorrection.correctedParams.x.toFixed(5)}</strong>
                     </div>
+                    )}
                     <div>Residual error vs. real, after correction: <strong>{result.parameterCorrection.residualErrorPct?.toFixed(3) ?? '—'}%</strong>
                       {' '}(was <strong>{((result.parameterCorrection.wrongParams.r / result.parameterCorrection.trueParams.r - 1) * 100).toFixed(1)}%</strong> before)
                     </div>
@@ -1365,7 +1557,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                         <TableHead className="mono text-xs">Parameter</TableHead>
                         <TableHead className="mono text-right text-xs">True</TableHead>
                         <TableHead className="mono text-right text-xs text-destructive">Wrong (attacked)</TableHead>
-                        <TableHead className="mono text-right text-xs text-status-good">Corrected (eq. 16)</TableHead>
+                        <TableHead className="mono text-right text-xs text-status-good">Corrected ({result.parameterCorrection.tHat != null ? 't̂' : 'eq. 16'})</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1541,10 +1733,11 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                       {pipelineHistory.map((h, i) => (
                         <TableRow key={i} className={h.detected ? 'bg-destructive/5' : ''}>
                           <TableCell className="text-xs mono">{h.iter}</TableCell>
-                          <TableCell className={`text-right text-xs mono font-semibold ${h.J > h.threshold ? 'text-destructive' : 'text-status-good'}`}>
-                            {h.J.toFixed(4)}
+                          {/* J/threshold come back null (NaN in JSON) once removals drive DoF to 0 */}
+                          <TableCell className={`text-right text-xs mono font-semibold ${h.J != null && h.threshold != null && h.J > h.threshold ? 'text-destructive' : 'text-status-good'}`}>
+                            {h.J?.toFixed(4) ?? '—'}
                           </TableCell>
-                          <TableCell className="text-right text-xs mono">{h.threshold.toFixed(4)}</TableCell>
+                          <TableCell className="text-right text-xs mono">{h.threshold?.toFixed(4) ?? '—'}</TableCell>
                           <TableCell className="text-xs">
                             <Badge variant={h.detected ? 'destructive' : 'outline'} className="text-[9px] px-1 py-0">
                               {h.detected ? 'YES' : 'no'}
@@ -1721,7 +1914,7 @@ export function BadDataAnalyticsTab({ topology }: BadDataAnalyticsTabProps) {
                           {r.J_detection_initial.toFixed(3)}
                         </TableCell>
                         <TableCell className="text-right text-xs mono">{r.chi2_threshold_initial.toFixed(3)}</TableCell>
-                        <TableCell className={`text-right text-xs mono ${r.pipeline.J_final > r.pipeline.threshold ? 'text-destructive font-semibold' : 'text-status-good'}`}>
+                        <TableCell className={`text-right text-xs mono ${r.pipeline.J_final > (r.pipeline.threshold ?? Infinity) ? 'text-destructive font-semibold' : 'text-status-good'}`}>
                           {r.pipeline.J_final.toFixed(3)}
                         </TableCell>
                         <TableCell>

@@ -38,7 +38,7 @@ export function MeasurementsSummaryCard({
   estimationMethod = 'dc-wls',
   groundTruth = 'ac',
   noiseLevel,
-  sigmaMin = 0.0001,
+  sigmaMin = 0.005,
   seed,
 }: MeasurementsSummaryCardProps) {
   const [rows, setRows] = useState<MeasurementPreviewRow[] | null>(null)
@@ -228,8 +228,8 @@ export function MeasurementsSummaryCard({
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <p className="mono text-xs text-muted-foreground">
                     σ as a percentage of the true value, per measurement (table order) — the expected spread, not a
-                    random sample. Flat within a meter kind except where σ_min (the absolute noise floor) dominates
-                    for near-zero true values.
+                    random sample. Flat within a meter kind except where the floor σ_min × full scale dominates: the
+                    small Q of a heavily loaded branch, and near-zero readings (full scale = 2|S| of the measured point).
                   </p>
                   <CopyDataButton headers={sigmaChartHeaders} rows={sigmaChartRows} label="σ% chart" className="shrink-0" />
                 </div>

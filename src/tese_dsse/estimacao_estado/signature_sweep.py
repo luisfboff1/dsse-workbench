@@ -29,9 +29,9 @@ que os erros de classificacao, que e como o pipeline se comporta de fato
 Convencoes herdadas de decisoes ja registradas em
 `docs/governanca/decisoes_tecnicas.md`:
 
-- `sigma_min` e piso em pu-de-referencia; `p_sigma` normaliza por `sn_mva`
-  (achado de 2026-07-19). Usar ~0.5% do `sn_mva` (=0.005) e nao herdar o
-  piso de outra rede (achado 14).
+- `sigma_min` e a fracao do fundo de escala de CADA medidor (2|S| do ponto
+  medido, `sensor_calibration.meter_full_scale`), padrao 0.005; desde
+  11/11/2026 nao depende mais de `sn_mva`.
 - Deteccao por `CME_N` sozinha nao e confiavel com `UI` heterogeneo --
   por isso `run_case` grava TAMBEM o teste classico do residuo
   (`j_res_ratio`), como cross-check e como feature.
@@ -91,6 +91,7 @@ __all__ = [
     "identify_by_glrt",
     "fit_parameter_change",
     "classify_by_glrt",
+    "branch_delta",
     # --- nivel LINHA (uma amostra por (snapshot, linha)) ---
     "measurement_key",
     "align_signature_library",
@@ -361,7 +362,7 @@ def signature_features(
     Ou seja: treinar POR REDE (o que e operacionalmente aceitavel -- cada
     alimentador tem o seu proprio modelo e pode ser simulado), ou trocar a
     representacao por uma que transfira de verdade (GNN sobre o grafo, ver
-    `docs/estudos/estimacao_estado/plano_agente_assinatura.md` degrau 2b).
+    `temas/assinatura_o2/plano_agente_assinatura.md` degrau 2b).
     Nunca reportar acuracia cross-network sem olhar o recall POR CLASSE: a
     acuracia global de 0,581 esconde um falso alarme de 100%.
     """
@@ -658,10 +659,10 @@ def run_case(
     try:
         model = build_ac_ybus_model_from_pandapower(net_model, meas)
         result = model.solve(x0=model.flat_start(), max_iter=max_gn_iter, tol=tol)
-        H = model.jacobian_finite_difference(result.x)
+        H = model.jacobian(result.x, sparse=True)
         r = model.z - model.h(result.x)
         sigma = model.sigma
-        geo = compute_geometric_diagnostics(H, np.diag(1.0 / sigma**2), r, sigma)
+        geo = compute_geometric_diagnostics(H, 1.0 / sigma**2, r, sigma)
     except Exception:
         return None
     if not np.all(np.isfinite(geo.CME_N)):
@@ -729,9 +730,9 @@ def run_case(
 
 
 SIGMA_MIN_DEFAULT = 0.005
-"""Piso de sigma em pu-de-referencia = 0.5% do `sn_mva` da propria rede
-(achado 14 de `manual_bad_data.md`: nunca herdar o piso de outra rede, senao
-o falso alarme do teste `CME_N` explode)."""
+"""Piso de sigma = 0.5% do fundo de escala de cada medidor (2|S| do ponto
+medido; `sensor_calibration.meter_full_scale`). Independe de `sn_mva` desde
+11/11/2026."""
 
 
 def build_scenarios(
@@ -868,7 +869,7 @@ def build_line_signature_library(
     offline, uma vez por rede. E preciso um ponto de operacao nao-degenerado:
     `flat start` NAO funciona (achado 12 de `manual_bad_data.md`).
 
-    Promovido do notebook `5_BUS_IEEE_AC_vulnerabilidade_topologica.ipynb`
+    Promovido do notebook `2026-07-23_5_BUS_IEEE_AC_vulnerabilidade_topologica.ipynb`
     (secao 44), que era a pendencia registrada na decisao de 2026-07-21
     ("ainda so implementado no notebook, nao promovido pra biblioteca").
     """
@@ -1339,7 +1340,7 @@ def parameter_sensitivity_library(
     parametro que nao entra na formacao de `H` nao muda `h(x)` em nada
     (medido: `||S||=0` para tie-switch, ver
     `docs/governanca/decisoes_tecnicas.md`, 16/09/2026, achado do
-    `cadeia_scada_ataques_switch_capacitor.ipynb` §8c). A direcao certa para
+    `2026-09-16_cadeia_scada_ataques_switch_capacitor.ipynb` §8c). A direcao certa para
     esse caso e a diferenca EXATA de FECHAR o ramo com a impedancia real que
     ele ja tem, mantendo o estado fixo em `x_ref` -- o mesmo mecanismo que
     `topology_sensitivity_library`
@@ -1520,6 +1521,26 @@ def fit_parameter_change(
     return coef, float(b @ A_pinv @ b), int(keep.sum())
 
 
+def branch_delta(net_model: Any) -> dict[int, float]:
+    """`delta_l = PTDF_ll` (DC) de cada linha EM SERVICO da rede do MODELO: a
+    fracao de uma injecao entre as barras terminais de `l` que passa pela
+    propria `l`. Entra no `t_hat` do `classify_by_glrt` (P2 de
+    `temas/assinatura_o2/fundamentacao_matematica_o2.md` §6.3). So usa a rede
+    que o operador ja tem; calcular uma vez por topologia."""
+    import pandapower as pp
+    from pandapower.pypower.makePTDF import makePTDF
+
+    net = deepcopy(net_model)
+    pp.rundcpp(net)
+    ppc = net._ppc
+    ptdf = makePTDF(ppc["baseMVA"], ppc["bus"], ppc["branch"])
+    f = ppc["branch"][:, 0].real.astype(int)
+    t = ppc["branch"][:, 1].real.astype(int)
+    lookup = net._pd2ppc_lookups["branch"]["line"][0]
+    return {int(l): float(ptdf[lookup + k, f[lookup + k]] - ptdf[lookup + k, t[lookup + k]])
+            for k, l in enumerate(net.line.index) if bool(net.line.at[l, "in_service"])}
+
+
 def classify_by_glrt(
     sens_lib: dict[int, np.ndarray],
     H: np.ndarray,
@@ -1529,6 +1550,7 @@ def classify_by_glrt(
     *,
     eps_lib: float = 1.0,
     tau_topology: float = 1.0,
+    delta: dict[int, float] | None = None,
 ) -> tuple[str, int | None, dict[str, Any]]:
     """Classifica medida x parametro x topologia por seleção de modelo entre
     subespacos, em UMA execucao do estimador.
@@ -1573,6 +1595,18 @@ def classify_by_glrt(
       bem acima de 1,0); abaixo e erro de parametro genuino (`~0,2`).
       Default `tau_topology=1,0`.
 
+      **Com `delta` (de `branch_delta(net_modelo)`), a partir de 12/10/2026,
+      o criterio de magnitude e trocado pelo `t_hat`.** `max|dp_hat| > 1`
+      chama de topologia erro de parametro GRANDE (-70%: 38 de 43 casos no
+      `case14`), porque o coeficiente sai amplificado por `1/(1 + t delta)`.
+      `t_hat = c/(1 - c delta)`, com `c` o coeficiente na direcao
+      `S_l @ [1,1,1]`, desfaz isso e devolve a mudanca fracionaria real:
+      ~-1 para abertura, o tamanho do erro para parametro. IC95 de
+      `c +- 1,96 sigma_c`. Veredito: `topology` se o IC (folga 0,1) contem
+      -1; `parameter` se fica em (-0,9; 0,9); senao `inconclusive`. Ver
+      `fundamentacao_matematica_o2.md` §6.5 e `scripts/onde_t_hat_ganha.py`.
+      Sem `delta`, vale o criterio antigo (reprodutibilidade das grades).
+
     Retorna `(tipo, line_id_ou_None, diagnostico)`. `diagnostico` sempre traz
     `line`/`mag_dp` (a melhor linha, mesmo quando o veredito e `measurement`)
     e `measurement_idx`/`measurement_score` (a medida isolada candidata,
@@ -1607,6 +1641,26 @@ def classify_by_glrt(
 
     if linha_comecava_fora_de_servico:
         return "topology", melhor_l, diag
+
+    if delta is not None and melhor_l in delta:
+        m = (np.eye(H.shape[0]) - K) @ (sens_lib[melhor_l] @ np.ones(sens_lib[melhor_l].shape[1]))
+        nm = float(m @ W @ m)
+        c = float(m @ W @ r) / nm
+        sc = 1.0 / np.sqrt(nm)
+        d = delta[melhor_l]
+
+        def _t(cc: float) -> float:
+            den = 1.0 - cc * d
+            return cc / den if den > 1e-9 else np.inf  # alem do polo: mudanca "infinita"
+
+        t_hat = _t(c)
+        lo, hi = sorted([_t(c - 1.96 * sc), _t(c + 1.96 * sc)])
+        diag.update(t_hat=t_hat, t_hat_ic=(lo, hi), t_hat_snr=abs(c) / sc)
+        if lo - 0.1 <= -1.0 <= hi + 0.1:
+            return "topology", melhor_l, diag
+        if lo > -0.9 and hi < 0.9:
+            return "parameter", melhor_l, diag
+        return "inconclusive", melhor_l, diag
 
     if mag > tau_topology:
         return "topology", melhor_l, diag

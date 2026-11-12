@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy as np
+import scipy.sparse as sp
 
 from .dc_linear import chi2_limit
 
@@ -58,12 +59,68 @@ __all__ = [
 ]
 
 
+# Acima deste numero de medicoes, K e Omega completas (m x m) nao sao montadas
+# em `compute_geometric_diagnostics` (3000^2 * 8 B = 72 MB cada); so as
+# diagonais, que e o que deteccao/identificacao/correcao usam. Metodos que
+# precisam das correlacoes fora da diagonal (heatmap de K, GLRT por
+# subespacos, assinaturas) ficam restritos a redes abaixo disso -- decisao em
+# `docs/governanca/decisoes_tecnicas.md` (desempenho em redes grandes).
+FULL_MATRIX_MAX_M = 3000
+
+
+def _weight_vector(W: np.ndarray) -> np.ndarray | None:
+    """Diagonal de ``W`` se ``W`` for diagonal (ou ja vier como vetor 1-D)."""
+
+    W = np.asarray(W, dtype=float)
+    if W.ndim == 1:
+        return W
+    d = np.diagonal(W)
+    return d.copy() if np.count_nonzero(W) == np.count_nonzero(d) else None
+
+
+def _gain(H: np.ndarray, W: np.ndarray) -> np.ndarray:
+    """``G = H^T W H`` (denso) sem o produto O(n m^2) quando ``W`` e diagonal.
+
+    Aceita ``H`` esparsa (``scipy.sparse``): so ``G`` (n x n) e densificada.
+    """
+
+    w = _weight_vector(W)
+    if sp.issparse(H):
+        Wm = sp.diags(w) if w is not None else np.asarray(W, dtype=float)
+        return np.asarray((H.T @ Wm @ H).todense())
+    return (H.T * w) @ H if w is not None else H.T @ np.asarray(W, dtype=float) @ H
+
+
+def _hginv_ht_diag(H, G: np.ndarray, block: int = 2048) -> np.ndarray:
+    """``diag(H G^-1 H^T)`` sem montar a matriz m x m.
+
+    Em blocos de linhas, para a memoria ficar em ``block x n`` em vez de
+    ``n x m``. Com ``H`` esparsa, cada bloco custa ``nnz * n`` (cada medicao
+    so toca as barras vizinhas), o que torna o caminho viavel em milhares de
+    barras.
+    """
+
+    Ginv = np.linalg.inv(G)
+    out = np.empty(H.shape[0], dtype=float)
+    for start in range(0, H.shape[0], block):
+        Hb = H[start : start + block]
+        Hb_dense = Hb.toarray() if sp.issparse(Hb) else Hb
+        out[start : start + block] = np.einsum(
+            "ij,ij->i", np.asarray(Hb @ Ginv), Hb_dense
+        )
+    return out
+
+
 def hat_matrix(H: np.ndarray, W: np.ndarray) -> np.ndarray:
-    """``K = H (H^T W H)^-1 H^T W`` -- projeta ``z`` sobre ``col(H)`` (eq. 5)."""
+    """``K = H (H^T W H)^-1 H^T W`` -- projeta ``z`` sobre ``col(H)`` (eq. 5).
+
+    ``W`` pode ser a matriz m x m ou o vetor 1-D da diagonal.
+    """
 
     H = np.asarray(H, dtype=float)
-    G = H.T @ W @ H
-    return H @ np.linalg.solve(G, H.T @ W)
+    w = _weight_vector(W)
+    HtW = H.T * w if w is not None else H.T @ np.asarray(W, dtype=float)
+    return H @ np.linalg.solve(HtW @ H, HtW)
 
 
 def undetectability_index(K_diag: np.ndarray) -> np.ndarray:
@@ -78,17 +135,22 @@ def residual_covariance(H: np.ndarray, W: np.ndarray, sigma: np.ndarray) -> np.n
 
     H = np.asarray(H, dtype=float)
     R = np.diag(np.asarray(sigma, dtype=float) ** 2)
-    G = H.T @ W @ H
-    return R - H @ np.linalg.solve(G, H.T)
+    return R - H @ np.linalg.solve(_gain(H, W), H.T)
 
 
 def normalized_residual(
     r: np.ndarray, H: np.ndarray, W: np.ndarray, sigma: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """``r_N = r / sqrt(diag(Omega))``. Retorna ``(r_N, sigma_r)``."""
+    """``r_N = r / sqrt(diag(Omega))``. Retorna ``(r_N, sigma_r)``.
 
-    Omega = residual_covariance(H, W, sigma)
-    sigma_r = np.sqrt(np.maximum(np.diag(Omega), 1e-16))
+    So a diagonal de Omega e calculada (``sigma_i^2 - (H G^-1 H^T)_ii``),
+    identica a ``np.diag(residual_covariance(...))`` sem o custo m x m.
+    """
+
+    if not sp.issparse(H):
+        H = np.asarray(H, dtype=float)
+    omega_diag = np.asarray(sigma, dtype=float) ** 2 - _hginv_ht_diag(H, _gain(H, W))
+    sigma_r = np.sqrt(np.maximum(omega_diag, 1e-16))
     return np.asarray(r, dtype=float) / sigma_r, sigma_r
 
 
@@ -137,9 +199,13 @@ def composed_normalized_error(
 
 @dataclass(frozen=True)
 class GeometricDiagnostics:
-    """Pacote de diagnosticos geometricos de uma estimacao WLS (Bretas 2013)."""
+    """Pacote de diagnosticos geometricos de uma estimacao WLS (Bretas 2013).
 
-    K: np.ndarray
+    ``K`` completa e ``None`` quando ``m > FULL_MATRIX_MAX_M``; todos os
+    demais campos sao sempre calculados.
+    """
+
+    K: np.ndarray | None
     K_diag: np.ndarray
     UI: np.ndarray
     sigma_r: np.ndarray
@@ -153,10 +219,24 @@ class GeometricDiagnostics:
 def compute_geometric_diagnostics(
     H: np.ndarray, W: np.ndarray, r: np.ndarray, sigma: np.ndarray
 ) -> GeometricDiagnostics:
-    """Calcula hat matrix, UI, resíduo normalizado, ``e_U``, CME e CNE de uma vez."""
+    """Calcula hat matrix, UI, resíduo normalizado, ``e_U``, CME e CNE de uma vez.
 
-    K = hat_matrix(H, W)
-    K_diag = np.diag(K)
+    ``W`` pode ser matriz m x m ou vetor 1-D; ``H`` pode ser densa ou
+    ``scipy.sparse`` (recomendado em rede grande). Acima de
+    ``FULL_MATRIX_MAX_M`` medicoes, ``K`` completa nao e montada
+    (``geo.K is None``).
+    """
+
+    w = _weight_vector(W)
+    if H.shape[0] <= FULL_MATRIX_MAX_M or w is None:
+        H = H.toarray() if sp.issparse(H) else np.asarray(H, dtype=float)
+        K = hat_matrix(H, W)
+        K_diag = np.diag(K).copy()
+    else:
+        if not sp.issparse(H):
+            H = sp.csr_matrix(np.asarray(H, dtype=float))
+        K = None
+        K_diag = _hginv_ht_diag(H, _gain(H, W)) * w
     UI = undetectability_index(K_diag)
     r_N, sigma_r = normalized_residual(r, H, W, sigma)
     e_U = masked_error(K_diag, r)
@@ -186,9 +266,9 @@ def state_covariance(H: np.ndarray, W: np.ndarray) -> np.ndarray:
     calculavel sem estado verdadeiro -- ao contrario do RMSE.
     """
 
-    H = np.asarray(H, dtype=float)
-    G = H.T @ np.asarray(W, dtype=float) @ H
-    return np.linalg.inv(G)
+    if not sp.issparse(H):
+        H = np.asarray(H, dtype=float)
+    return np.linalg.inv(_gain(H, W))
 
 
 def state_uncertainty(

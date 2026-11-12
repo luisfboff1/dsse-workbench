@@ -1,5 +1,5 @@
 """Log de resultados de experimentos -- ver
-docs/estudos/estimacao_estado/resultados_classificacao/README.md.
+temas/assinatura_o2/resultados_classificacao/README.md.
 
 Cada chamada a `log_resultado` acrescenta UMA linha JSON a um arquivo
 `.jsonl` (JSON Lines) **versionado no git**. E o registro que fica quando um
@@ -32,12 +32,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .paths import DOCS_DIR
+from .paths import PROJECT_ROOT
 
 DEFAULT_LOG_PATH = (
-    DOCS_DIR
-    / "estudos"
-    / "estimacao_estado"
+    PROJECT_ROOT
+    / "temas"
+    / "assinatura_o2"
     / "resultados_classificacao"
     / "log_experimentos.jsonl"
 )

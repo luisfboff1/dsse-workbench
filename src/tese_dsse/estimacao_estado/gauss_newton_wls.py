@@ -11,10 +11,16 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.linalg import splu
 
 from ..auditoria import AuditTrail, resolve_audit
 
 ArrayFunc = Callable[[np.ndarray], np.ndarray]
+
+
+def _dense(matrix) -> np.ndarray:
+    return matrix.toarray() if sp.issparse(matrix) else np.asarray(matrix)
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,8 @@ class WLSIteration:
     x: np.ndarray
     h_x: np.ndarray
     residual: np.ndarray
+    # ndarray ou scipy.sparse (quando `jacobian` devolve esparsa, ex. modelo
+    # AC v1) -- quem le deve passar por `.toarray()` se precisar denso.
     jacobian: np.ndarray
     gain: np.ndarray
     rhs: np.ndarray
@@ -89,7 +97,8 @@ def solve_wls_gauss_newton(
         previstas `h(x)`, no mesmo tamanho e ordem de `z`.
     jacobian:
         Funcao que retorna `H(x) = dh/dx`. O formato deve ser
-        `(numero_de_medicoes, numero_de_estados)`.
+        `(numero_de_medicoes, numero_de_estados)`. Pode ser `ndarray` ou
+        `scipy.sparse`; esparsa ativa G esparsa + fatoracao `splu`.
     x0:
         Chute inicial do vetor de estados. Em PSSE, normalmente e um flat start
         ou um resultado de fluxo de potencia anterior.
@@ -140,10 +149,13 @@ def solve_wls_gauss_newton(
 
     # `sigma` guarda desvios-padrao; a covariancia conceitual e
     # R = diag(sigma^2), logo a matriz de pesos WLS e R^-1.
-    weight = np.diag(1.0 / np.square(sigma))
+    # W e diagonal: guardamos so o vetor w. Montar W densa (m x m) custava
+    # O(n m^2) em HᵀWH e dominava o tempo em redes grandes.
+    w = 1.0 / np.square(sigma)
     audit.step("z (medicoes)", z, formula="z")
     audit.step("sigma (desvios)", sigma, formula="sigma")
-    audit.step("W = diag(1/sigma^2)", weight, formula="W = R^-1")
+    if audit.enabled:
+        audit.step("W = diag(1/sigma^2)", np.diag(w), formula="W = R^-1")
     audit.step("x0 (estado inicial)", x, formula="x0")
     iterations: list[WLSIteration] = []
     converged = False
@@ -152,7 +164,10 @@ def solve_wls_gauss_newton(
         with audit.section(f"iteracao {iteration}"):
             h_x = np.asarray(h(x), dtype=float).reshape(-1)
             residual = z - h_x
-            h_matrix = np.asarray(jacobian(x), dtype=float)
+            h_matrix = jacobian(x)
+            is_sparse = sp.issparse(h_matrix)
+            if not is_sparse:
+                h_matrix = np.asarray(h_matrix, dtype=float)
 
             if h_x.shape != z.shape:
                 raise ValueError("h(x) deve retornar vetor com o mesmo tamanho de z.")
@@ -161,25 +176,35 @@ def solve_wls_gauss_newton(
 
             audit.step("h(x) (medicoes previstas)", h_x, formula="h(x)")
             audit.step("r = z - h(x) (residuo)", residual, formula="r = z - h(x)")
-            audit.step("H = dh/dx (Jacobiana)", h_matrix, formula="H(x)")
+            if audit.enabled:
+                audit.step("H = dh/dx (Jacobiana)", _dense(h_matrix), formula="H(x)")
 
             # Linearizacao de Taylor:
             # h(x + dx) ~= h(x) + H dx
             # (H^T W H) dx = H^T W (z - h(x))
-            gain = h_matrix.T @ weight @ h_matrix
-            rhs = h_matrix.T @ weight @ residual
-            audit.step("G = HᵀWH (matriz de ganho)", gain, formula="G = HᵀWH")
+            # HᵀW sem montar W (m x m); com H esparsa, G tambem sai esparsa.
+            weighted_ht = h_matrix.T @ sp.diags(w) if is_sparse else h_matrix.T * w
+            gain = weighted_ht @ h_matrix
+            rhs = np.asarray(weighted_ht @ residual).reshape(-1)
+            if audit.enabled:
+                audit.step("G = HᵀWH (matriz de ganho)", _dense(gain), formula="G = HᵀWH")
             audit.step("b = HᵀWr (lado direito)", rhs, formula="b = HᵀWr")
             used_lstsq = False
 
             try:
-                delta_x = np.linalg.solve(gain, rhs)
-            except np.linalg.LinAlgError:
-                delta_x = np.linalg.lstsq(gain, rhs, rcond=None)[0]
+                if is_sparse:
+                    delta_x = splu(sp.csc_matrix(gain)).solve(rhs)
+                else:
+                    delta_x = np.linalg.solve(gain, rhs)
+            except (np.linalg.LinAlgError, RuntimeError):
+                # RuntimeError = splu com G exatamente singular. O fallback
+                # denso e mantido de proposito: rede nao observavel ainda
+                # devolve uma resposta (tema da tese), nao uma excecao.
+                delta_x = np.linalg.lstsq(_dense(gain), rhs, rcond=None)[0]
                 used_lstsq = True
                 audit.note("G singular: usando minimos quadrados (lstsq).")
 
-            objective = float(residual.T @ weight @ residual)
+            objective = float(residual @ (w * residual))
             # ||delta_x||_inf = max_i |delta_x[i]|: maior passo individual entre
             # as componentes do estado. Se < tol, considera-se convergido.
             step_norm_inf = float(np.linalg.norm(delta_x, ord=np.inf))
@@ -214,7 +239,7 @@ def solve_wls_gauss_newton(
                 break
 
     final_residual = z - np.asarray(h(x), dtype=float).reshape(-1)
-    final_objective = float(final_residual.T @ weight @ final_residual)
+    final_objective = float(final_residual @ (w * final_residual))
     audit.step("x_final (estado estimado)", x, formula="x*")
     audit.step("J_final = rᵀWr", final_objective, formula="J(x*)")
     audit.note(f"convergiu={converged} em {len(iterations)} iteracoes")

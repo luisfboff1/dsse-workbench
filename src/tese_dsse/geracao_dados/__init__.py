@@ -1,7 +1,7 @@
 """Geracao de dados sinteticos para DSSE multitaxa.
 
 Modulo que implementa o plano C descrito em
-`docs/estudos/estimacao_estado/plano_geracao_dados_sinteticos.md`.
+`temas/dados_e_redes/plano_geracao_dados_sinteticos.md`.
 Pipeline em duas etapas operacionais:
 
 - C1 (`batch_powerflow`): roda fluxo de potencia em uma rede pandapower

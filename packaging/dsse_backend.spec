@@ -68,9 +68,14 @@ binaries = []
 # bundle -- centenas de MB para codigo que so roda em notebook.
 UNUSED_BY_APP = {
     "tese_dsse.estimacao_estado.signature_model",
-    "tese_dsse.estimacao_estado.signature_sweep",
     "tese_dsse.estimacao_estado.dc_plots",
 }
+# signature_sweep saiu desta lista em 03/11/2026: o GLRT + t-hat e a figura da
+# etapa offline da aba Bad Data usam classify_by_glrt, a biblioteca e o delta
+# dele. So depende de numpy e do proprio pacote (quem puxa sklearn e o
+# signature_model). A figura le o template figura_offline.html (datas abaixo).
+datas += [(str(REPO_ROOT / "src" / "tese_dsse" / "estimacao_estado" / "figura_offline.html"),
+           "tese_dsse/estimacao_estado")]
 
 
 def submodules_of(subpackage: str) -> list[str]:
@@ -91,7 +96,7 @@ def submodules_of(subpackage: str) -> list[str]:
 
 
 hiddenimports = ["tese_dsse", "tese_dsse.auditoria"]
-for subpackage in ("tese_dsse.estimacao_estado", "tese_dsse.powerflow"):
+for subpackage in ("tese_dsse.estimacao_estado", "tese_dsse.powerflow", "tese_dsse.sistemas_dinamicos"):
     hiddenimports += [m for m in submodules_of(subpackage) if m not in UNUSED_BY_APP]
 
 datas += collect_data_files("pandapower")

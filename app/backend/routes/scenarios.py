@@ -64,6 +64,7 @@ def list_scenarios() -> list[dict[str, Any]]:
                 "id": data.get("id", path.stem),
                 "name": data.get("name", path.stem),
                 "kind": data.get("kind", "topology"),
+                "temporal": isinstance(data.get("settings", {}).get("temporal"), dict),
                 "topologyName": data.get("topology", {}).get("name"),
                 "createdAt": data.get("createdAt"),
                 "updatedAt": data.get("updatedAt"),

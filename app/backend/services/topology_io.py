@@ -133,6 +133,25 @@ def _bus_xy(net: "pp.pandapowerNet", pp_idx: int) -> tuple[float, float] | None:
     return None
 
 
+def _trafo_tap_ratio(net: Any, row: Any) -> float:
+    """Relacao fora do nominal do trafo, em pu: tensao nominal de cada lado
+    (com o tap, se houver) sobre a tensao nominal da barra daquele lado.
+    E o "ratio" do MATPOWER/pandapower (0,978 no trafo 4-7 do IEEE 14).
+    Defasagem (shift_degree) nao e representada."""
+    import pandas as pd
+
+    def lado(side: str, vn: float, bus: int) -> float:
+        f = 1.0
+        if (str(row.get("tap_side", "")) == side and pd.notna(row.get("tap_pos"))
+                and pd.notna(row.get("tap_step_percent"))):
+            neutro = row.get("tap_neutral")
+            neutro = float(neutro) if pd.notna(neutro) else 0.0
+            f += (float(row.tap_pos) - neutro) * float(row.tap_step_percent) / 100.0
+        return vn * f / float(net.bus.at[bus, "vn_kv"])
+
+    return lado("hv", float(row.vn_hv_kv), int(row.hv_bus)) / lado("lv", float(row.vn_lv_kv), int(row.lv_bus))
+
+
 def ppnet_to_topology(
     net: "pp.pandapowerNet",
     source_id: str = "imported",
@@ -223,6 +242,19 @@ def ppnet_to_topology(
         load_p[b] = load_p.get(b, 0.0) + float(row.p_mw) / sn_mva
         load_q[b] = load_q.get(b, 0.0) + float(row.q_mvar) / sn_mva
 
+    # Shunt de barra (banco de capacitor/reator), consumo a V = 1 pu, como o
+    # net.shunt do pandapower (o IEEE 14 tem -19 Mvar na barra 8). BUG-011.
+    shunt_p: dict[int, float] = {}
+    shunt_q: dict[int, float] = {}
+    if "shunt" in net and len(net.shunt) > 0:
+        for _, row in net.shunt.iterrows():
+            b = int(row.bus)
+            if b not in kept_bus_idx or ("in_service" in row.index and not bool(row.in_service)):
+                continue
+            passo = float(row.step) if "step" in row.index and row.step == row.step else 1.0
+            shunt_p[b] = shunt_p.get(b, 0.0) + float(row.p_mw) * passo / sn_mva
+            shunt_q[b] = shunt_q.get(b, 0.0) + float(row.q_mvar) * passo / sn_mva
+
     dg_p: dict[int, float] = {}
     dg_q: dict[int, float] = {}
     for _, row in sgen_df.iterrows():
@@ -279,6 +311,9 @@ def ppnet_to_topology(
             "pGenDG": round(dg_p.get(b, 0.0), 5),
             "qGenDG": round(dg_q.get(b, 0.0), 5),
         }
+        if b in shunt_p:
+            bus_dict["pShunt"] = round(shunt_p[b], 6)
+            bus_dict["qShunt"] = round(shunt_q[b], 6)
 
         xy = _bus_xy(net, pp_idx)
         if xy is not None:
@@ -327,16 +362,20 @@ def ppnet_to_topology(
         r_pu = vkr * sn_mva / sn_t
         x_pu = float(np.sqrt(max(z_pu**2 - r_pu**2, 0.0)))
 
-        lines_out.append(
-            {
-                "id": seq,
-                "from": pp_idx_to_id[hv],
-                "to": pp_idx_to_id[lv],
-                "resistance": round(r_pu, 7),
-                "reactance": round(max(x_pu, 1e-6), 7),
-                "susceptance": 0.0,
-            }
-        )
+        branch = {
+            "id": seq,
+            "from": pp_idx_to_id[hv],
+            "to": pp_idx_to_id[lv],
+            "resistance": round(r_pu, 7),
+            "reactance": round(max(x_pu, 1e-6), 7),
+            "susceptance": 0.0,
+        }
+        # Relacao fora do nominal: build_net_from_frontend monta esse ramo como
+        # trafo de verdade (BUG-011). Trafo nominal fica linha (fisica identica).
+        tap = _trafo_tap_ratio(net, row)
+        if abs(tap - 1.0) > 1e-9:
+            branch["tapRatio"] = round(tap, 6)
+        lines_out.append(branch)
         seq += 1
 
     line_param: dict[int, dict] = {}

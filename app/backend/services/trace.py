@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import scipy.sparse as sp
 
 # Matrizes com mais de MAX_MATRIX_ELEMENTS elementos são truncadas a 20×20.
 MAX_MATRIX_ELEMENTS = 625  # 25×25 cobre IEEE 14-bus inteiro
@@ -26,31 +27,31 @@ class TraceVariable:
     def to_dict(self) -> dict:
         v = self.value
 
-        if isinstance(v, np.ndarray):
-            if v.ndim == 2:
-                rows, cols = v.shape
-                truncated = rows * cols > MAX_MATRIX_ELEMENTS
-                data = v.tolist()
-                if truncated:
-                    data = [row[:20] for row in data[:20]]
-                return {
-                    "name": self.name,
-                    "label": self.label,
-                    "type": "matrix",
-                    "shape": [rows, cols],
-                    "data": data,
-                    "truncated": truncated,
-                    "description": self.description,
-                }
-            else:  # 1-D vector
-                return {
-                    "name": self.name,
-                    "label": self.label,
-                    "type": "vector",
-                    "shape": [int(v.shape[0])],
-                    "data": v.tolist(),
-                    "description": self.description,
-                }
+        # H/G do solver AC v1 chegam esparsas; o corte 20x20 e feito antes de
+        # densificar, senao uma rede grande geraria centenas de MB aqui.
+        if sp.issparse(v) or (isinstance(v, np.ndarray) and v.ndim == 2):
+            rows, cols = v.shape
+            truncated = rows * cols > MAX_MATRIX_ELEMENTS
+            block = v[:20, :20] if truncated else v
+            data = (block.toarray() if sp.issparse(block) else block).tolist()
+            return {
+                "name": self.name,
+                "label": self.label,
+                "type": "matrix",
+                "shape": [rows, cols],
+                "data": data,
+                "truncated": truncated,
+                "description": self.description,
+            }
+        if isinstance(v, np.ndarray):  # 1-D vector
+            return {
+                "name": self.name,
+                "label": self.label,
+                "type": "vector",
+                "shape": [int(v.shape[0])],
+                "data": v.tolist(),
+                "description": self.description,
+            }
 
         # scalar / string / bool
         scalar_val: Any
@@ -275,11 +276,11 @@ def build_ac_gn_wls_trace(
         ]
         if include_heavy:
             vars_.insert(2, TraceVariable(
-                "H_k", f"Jacobian H (iter {k})", np.asarray(it.jacobian),
+                "H_k", f"Jacobian H (iter {k})", it.jacobian,
                 description="∂h/∂x evaluated at x_k",
             ))
             vars_.insert(3, TraceVariable(
-                "G_k", f"Gain matrix G = HᵀWH (iter {k})", np.asarray(it.gain),
+                "G_k", f"Gain matrix G = HᵀWH (iter {k})", it.gain,
                 description="Normal equations matrix at x_k",
             ))
         iteration_steps.append(TraceStep(

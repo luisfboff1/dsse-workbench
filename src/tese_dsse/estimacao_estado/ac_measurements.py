@@ -23,6 +23,7 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 
 from ..auditoria import AuditTrail
 from .gauss_newton_wls import WLSResult, solve_wls_gauss_newton
@@ -456,9 +457,10 @@ class ACYbusMeasurementModel:
     """Estimador AC baseado nas matrizes `Ybus`, `Yf`, `Yt`.
 
     O estado e o classico
-    `x = [theta_i para i != slack ; vm_i para todas as barras]`. Como o solver
-    interno calcula a Jacobiana por diferencas finitas, basta implementar `h(x)`
-    em forma vetorial usando as admitancias.
+    `x = [theta_i para i != slack ; vm_i para todas as barras]`. `solve` usa a
+    Jacobiana analitica (`jacobian`), que cai em diferencas finitas para
+    qualquer grupo de medicao sem derivada escrita -- ver decisao em
+    `docs/governanca/decisoes_tecnicas.md` (desempenho em redes grandes).
     """
 
     def __init__(
@@ -495,6 +497,43 @@ class ACYbusMeasurementModel:
             bus: index for index, bus in enumerate(self.angle_buses)
         }
         self.vm_state_offset = len(self.angle_buses)
+
+        # Indices pre-calculados: h(x) e H(x) viram operacoes vetoriais em vez
+        # de um laco Python por medicao (antes, `branches.index` por medicao
+        # deixava h em O(m * n_ramos)).
+        self._from_idx = np.array(
+            [self.bus_lookup[b.from_bus] for b in self.branches], dtype=int
+        )
+        self._to_idx = np.array(
+            [self.bus_lookup[b.to_bus] for b in self.branches], dtype=int
+        )
+        branch_position = {
+            (b.branch_kind, b.branch_id): i for i, b in enumerate(self.branches)
+        }
+        self._groups: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        rows: dict[str, list[int]] = {}
+        positions: dict[str, list[int]] = {}
+        for row, m in enumerate(self.measurements):
+            if m.kind in ("v_bus", "va_bus", "p_inj", "q_inj"):
+                group, position = m.kind, self.bus_lookup[m.element]
+            elif m.kind in ("p_branch", "q_branch"):
+                if m.side is None or m.branch_kind is None:
+                    raise ValueError(
+                        "p_branch/q_branch precisam de `side` e `branch_kind`."
+                    )
+                group = f"{m.kind}_{m.side}"
+                position = branch_position[(m.branch_kind, m.element)]
+            else:
+                raise ValueError(
+                    f"ACYbusMeasurementModel nao suporta o tipo de medicao {m.kind!r}."
+                )
+            rows.setdefault(group, []).append(row)
+            positions.setdefault(group, []).append(position)
+        for group in rows:
+            self._groups[group] = (
+                np.array(rows[group], dtype=int),
+                np.array(positions[group], dtype=int),
+            )
 
     @property
     def num_states(self) -> int:
@@ -549,55 +588,115 @@ class ACYbusMeasurementModel:
         S_inj = V * np.conj(Ibus)
         If = np.asarray(self.Yf @ V).reshape(-1)
         It = np.asarray(self.Yt @ V).reshape(-1)
-        from_idx = np.array(
-            [self.bus_lookup[b.from_bus] for b in self.branches], dtype=int
-        )
-        to_idx = np.array([self.bus_lookup[b.to_bus] for b in self.branches], dtype=int)
-        S_from = V[from_idx] * np.conj(If) if len(self.branches) else np.array([])
-        S_to = V[to_idx] * np.conj(It) if len(self.branches) else np.array([])
+        S_from = V[self._from_idx] * np.conj(If) if len(self.branches) else np.array([])
+        S_to = V[self._to_idx] * np.conj(It) if len(self.branches) else np.array([])
         return V, S_inj, S_from, S_to
 
     def h(self, x: np.ndarray) -> np.ndarray:
         V, S_inj, S_from, S_to = self._powers(x)
-        predicted: list[float] = []
-        for m in self.measurements:
-            if m.kind == "v_bus":
-                predicted.append(float(abs(V[self.bus_lookup[m.element]])))
+        predicted = np.empty(len(self.measurements), dtype=float)
+        values = {
+            "v_bus": lambda p: np.abs(V[p]),
+            "va_bus": lambda p: np.rad2deg(np.angle(V[p])),
+            "p_inj": lambda p: np.real(S_inj[p]) * self.sn_mva,
+            "q_inj": lambda p: np.imag(S_inj[p]) * self.sn_mva,
+            "p_branch_from": lambda p: np.real(S_from[p]) * self.sn_mva,
+            "q_branch_from": lambda p: np.imag(S_from[p]) * self.sn_mva,
+            "p_branch_to": lambda p: np.real(S_to[p]) * self.sn_mva,
+            "q_branch_to": lambda p: np.imag(S_to[p]) * self.sn_mva,
+        }
+        for group, (rows, positions) in self._groups.items():
+            predicted[rows] = values[group](positions)
+        return predicted
+
+    def jacobian(self, x: np.ndarray, sparse: bool = False):
+        """H(x) analitica (derivadas polares de MATPOWER `dSbus_dV`/`dSbr_dV`).
+
+        Com ``sparse=True`` devolve ``scipy.sparse.csr_matrix`` (usado pelo
+        `solve`); o padrao e ``ndarray`` denso, que e o que as rotinas de bad
+        data esperam.
+
+        Grupos de medicao sem derivada escrita aqui caem automaticamente em
+        `jacobian_finite_difference` (so nas linhas deles), entao um tipo novo
+        de medicao so precisa de `h(x)` para funcionar -- a derivada analitica
+        e otimizacao, nao requisito. `tests/test_ac_jacobian_analytic.py`
+        confere analitica x diferencas finitas.
+        """
+        derivs = self._analytic_derivs(x)
+        angle_cols = np.delete(np.arange(self.num_buses), self.slack_position)
+        blocks, block_rows, fallback_rows = [], [], []
+        for group, (rows, positions) in self._groups.items():
+            if group not in derivs:
+                fallback_rows.append(rows)
                 continue
-            if m.kind == "va_bus":
-                predicted.append(
-                    float(np.rad2deg(np.angle(V[self.bus_lookup[m.element]])))
+            dVa, dVm = derivs[group]
+            blocks.append(
+                sp.hstack(
+                    [
+                        sp.csr_matrix(dVa)[positions][:, angle_cols],
+                        sp.csr_matrix(dVm)[positions],
+                    ]
                 )
-                continue
-            if m.kind == "p_inj":
-                predicted.append(
-                    float(np.real(S_inj[self.bus_lookup[m.element]]) * self.sn_mva)
-                )
-                continue
-            if m.kind == "q_inj":
-                predicted.append(
-                    float(np.imag(S_inj[self.bus_lookup[m.element]]) * self.sn_mva)
-                )
-                continue
-            if m.kind in ("p_branch", "q_branch"):
-                if m.side is None or m.branch_kind is None:
-                    raise ValueError(
-                        "p_branch/q_branch precisam de `side` e `branch_kind`."
-                    )
-                branch = self.branch_lookup[(m.branch_kind, m.element)]
-                array_index = self.branches.index(branch)
-                flow_pu = (S_from if m.side == "from" else S_to)[array_index]
-                value = (
-                    float(np.real(flow_pu) * self.sn_mva)
-                    if m.kind == "p_branch"
-                    else float(np.imag(flow_pu) * self.sn_mva)
-                )
-                predicted.append(value)
-                continue
-            raise ValueError(
-                f"ACYbusMeasurementModel nao suporta o tipo de medicao {m.kind!r}."
             )
-        return np.array(predicted, dtype=float)
+            block_rows.append(rows)
+        if fallback_rows:
+            rows = np.concatenate(fallback_rows)
+            blocks.append(sp.csr_matrix(self.jacobian_finite_difference(x)[rows]))
+            block_rows.append(rows)
+        if not blocks:
+            H = sp.csr_matrix((0, self.num_states))
+        else:
+            order = np.concatenate(block_rows)
+            inverse = np.empty_like(order)
+            inverse[order] = np.arange(order.size)
+            H = sp.vstack(blocks).tocsr()[inverse]
+        return H if sparse else H.toarray()
+
+    def _analytic_derivs(self, x: np.ndarray) -> dict:
+        """``{grupo: (dh/dVa, dh/dVm)}`` por barra (nb colunas), unidades de h.
+
+        Ponto de extensao: um grupo de medicao novo ganha derivada analitica
+        adicionando uma entrada aqui; sem ela, `jacobian` usa diferencas
+        finitas nas linhas desse grupo.
+        """
+        V = self.state_to_voltage(x)
+        nb = self.num_buses
+        Vnorm = V / np.abs(V)
+        dV, dVn = sp.diags(V), sp.diags(Vnorm)
+        Ibus = self.Ybus @ V
+        dS_dVm = dV @ (self.Ybus @ dVn).conj() + sp.diags(np.conj(Ibus)) @ dVn
+        dS_dVa = 1j * dV @ (sp.diags(Ibus) - self.Ybus @ dV).conj()
+
+        branch_derivs = {}
+        nbr = len(self.branches)
+        for side, Ybr, idx in (
+            ("from", self.Yf, self._from_idx),
+            ("to", self.Yt, self._to_idx),
+        ):
+            if not nbr:
+                break
+            Ybr = sp.csr_matrix(Ybr)
+            C = sp.csr_matrix((np.ones(nbr), (np.arange(nbr), idx)), shape=(nbr, nb))
+            Ibr = Ybr @ V
+            dIbr_c, dVbr = sp.diags(np.conj(Ibr)), sp.diags(V[idx])
+            branch_derivs[side] = (
+                dVbr @ (Ybr @ dVn).conj() + dIbr_c @ C @ dVn,  # dS/dVm
+                1j * (dIbr_c @ C @ dV - dVbr @ (Ybr @ dV).conj()),  # dS/dVa
+            )
+
+        eye = sp.identity(nb, format="csr")
+        zero = sp.csr_matrix((nb, nb))
+        # (dh/dVa, dh/dVm) por grupo, nas unidades de h (graus, MW, MVAr).
+        derivs = {
+            "v_bus": (zero, eye),
+            "va_bus": (eye * np.rad2deg(1.0), zero),
+            "p_inj": (dS_dVa.real * self.sn_mva, dS_dVm.real * self.sn_mva),
+            "q_inj": (dS_dVa.imag * self.sn_mva, dS_dVm.imag * self.sn_mva),
+        }
+        for side, (dVm, dVa) in branch_derivs.items():
+            derivs[f"p_branch_{side}"] = (dVa.real * self.sn_mva, dVm.real * self.sn_mva)
+            derivs[f"q_branch_{side}"] = (dVa.imag * self.sn_mva, dVm.imag * self.sn_mva)
+        return derivs
 
     def jacobian_finite_difference(
         self, x: np.ndarray, step: float = 1e-6
@@ -626,7 +725,7 @@ class ACYbusMeasurementModel:
             z=self.z,
             sigma=self.sigma,
             h=self.h,
-            jacobian=self.jacobian_finite_difference,
+            jacobian=lambda x: self.jacobian(x, sparse=True),
             x0=x0,
             max_iter=max_iter,
             tol=tol,
@@ -686,6 +785,12 @@ def build_ac_ybus_model_from_pandapower(
     trafo_range = branch_lookup.get("trafo")
     if trafo_range is not None:
         start, _ = trafo_range
+        # `ppc["internal"]` so tem os ramos EM SERVICO, mas o lookup conta
+        # todas as linhas: cada linha fora de servico antes dos trafos desloca
+        # o inicio deles uma posicao para tras (sem isso, case14 com uma
+        # linha aberta estoura o indice do ultimo trafo).
+        if line_range is not None:
+            start = int(start) - int((~net.line.in_service.astype(bool)).sum())
         in_service_trafos = [
             int(trafo_id)
             for trafo_id, row in net.trafo.iterrows()
@@ -737,6 +842,72 @@ def build_ac_ybus_model_from_pandapower(
     )
 
 
+def network_power_scale(net) -> float:
+    """|S| tipica da rede (MVA): mediana dos |S| de operacao de todas as
+    injecoes e de todas as pontas de linha/trafo em servico. Base do piso de
+    leitura quase nula (`sensor_calibration.meter_full_scale`). Depende so do
+    ponto de operacao, nunca de `sn_mva`. Exige `pp.runpp(net)` antes."""
+
+    from .sensor_calibration import typical_power_scale
+
+    vals: list[float] = []
+    ppc = getattr(net, "_ppc", None)
+    if ppc is not None and "internal" in ppc and "Ybus" in ppc["internal"]:
+        Ybus, V = ppc["internal"]["Ybus"], ppc["internal"]["V"]
+        S = (V * np.conj(np.asarray(Ybus @ V).reshape(-1))) * float(ppc["baseMVA"])
+        vals += list(np.abs(S))
+    ln = net.res_line[net.line.in_service.astype(bool).reindex(net.res_line.index, fill_value=False)]
+    for side in ("from", "to"):
+        vals += list(np.hypot(ln[f"p_{side}_mw"], ln[f"q_{side}_mvar"]))
+    if hasattr(net, "trafo") and len(net.trafo):
+        tr = net.res_trafo[net.trafo.in_service.astype(bool).reindex(net.res_trafo.index, fill_value=False)]
+        for side in ("hv", "lv"):
+            vals += list(np.hypot(tr[f"p_{side}_mw"], tr[f"q_{side}_mvar"]))
+    return typical_power_scale([v for v in vals if np.isfinite(v)])
+
+
+def _pair_magnitudes(pq: list) -> list[float]:
+    """|S| do medidor de cada medida P/Q: hypot do par (P, Q) do mesmo ponto
+    (mesma barra, ou mesmo ramo e lado). Sem o par, |valor|."""
+
+    val = {}
+    for m in pq:
+        val[(m.kind[0], m.kind[1:], m.element, m.side, m.branch_kind)] = m.value
+    out = []
+    for m in pq:
+        other = ("q" if m.kind[0] == "p" else "p", m.kind[1:], m.element, m.side, m.branch_kind)
+        out.append(float(np.hypot(m.value, val.get(other, 0.0))))
+    return out
+
+
+def bus_throughput(net) -> dict[int, float]:
+    """{barra: maior |S| (MVA) entre as pontas de linha/trafo em servico
+    ligadas a ela}. Fundo de escala do medidor de injecao numa barra de
+    passagem (`sensor_calibration.meter_full_scale`)."""
+
+    out: dict[int, float] = {int(b): 0.0 for b in net.bus.index}
+
+    def _acc(bus, s):
+        b = int(bus)
+        if np.isfinite(s) and s > out.get(b, 0.0):
+            out[b] = float(s)
+
+    for l, row in net.line.iterrows():
+        if not bool(row.in_service) or l not in net.res_line.index:
+            continue
+        r = net.res_line.loc[l]
+        _acc(row.from_bus, np.hypot(r.p_from_mw, r.q_from_mvar))
+        _acc(row.to_bus, np.hypot(r.p_to_mw, r.q_to_mvar))
+    if hasattr(net, "trafo"):
+        for t, row in net.trafo.iterrows():
+            if not bool(row.in_service) or t not in net.res_trafo.index:
+                continue
+            r = net.res_trafo.loc[t]
+            _acc(row.hv_bus, np.hypot(r.p_hv_mw, r.q_hv_mvar))
+            _acc(row.lv_bus, np.hypot(r.p_lv_mw, r.q_lv_mvar))
+    return out
+
+
 def synthetic_full_measurements_from_results(
     net,
     *,
@@ -761,7 +932,7 @@ def synthetic_full_measurements_from_results(
     `sensor_calibration.py` — a mesma usada por
     `app/backend/services/measurement_kinds.py` — para que notebook e app
     rodem com exatamente o mesmo modelo de ruido/peso no mesmo caso (ver
-    `docs/estudos/estimacao_estado/literatura/bretas2017_malicious_data_innovation.md`).
+    `temas/revisao_bibliografica/literatura/bretas2017_malicious_data_innovation.md`).
     """
 
     measurements: list[ACMeasurement] = []
@@ -769,22 +940,29 @@ def synthetic_full_measurements_from_results(
     if kind is not None:
         if noise_level is None or sigma_min is None:
             raise ValueError("kind requer noise_level e sigma_min também.")
-        from .sensor_calibration import p_sigma as _p_sigma, v_sigma as _v_sigma
+        from .sensor_calibration import (
+            meter_full_scale as _fs,
+            p_sigma as _p_sigma,
+            relative_sigma as _rel,
+            v_sigma as _v_sigma,
+        )
 
-        # sn_mva do proprio net -- p_sigma normaliza sigma_min por essa base
-        # antes de aplicar o piso absoluto (ver docstring de p_sigma). Sem
-        # isso, `pn.case5()` (sn_mva=100) nunca atinge o piso enquanto o app
-        # (sn_mva=1 sempre) atinge, mudando o J entre notebook e app mesmo
-        # com o mesmo estado fisico -- achado em 2026-07-19.
-        sn_mva = float(net.sn_mva)
+        # Piso por medidor: fundo de escala = 2|S| do ponto medido (o par
+        # P, Q da mesma barra/ponta), nunca `sn_mva` (11/11/2026).
+        s_typ = network_power_scale(net)
+        s_bus = bus_throughput(net)
+        rel_power = _rel(kind, noise_level)  # type: ignore[arg-type]
 
-        def power_sigma(value: float) -> float:
-            return _p_sigma(kind, value, noise_level, sigma_min, sn_mva=sn_mva)  # type: ignore[arg-type]
+        def power_sigma(value: float, p: float, q: float, s_local: float = 0.0) -> float:
+            return _p_sigma(kind, value, noise_level, sigma_min, full_scale=_fs(p, q, s_typ, s_local))  # type: ignore[arg-type]
 
         voltage_sigma_pu = _v_sigma(kind, noise_level, sigma_min)  # type: ignore[arg-type]
     else:
+        rel_power = power_sigma_relative
 
-        def power_sigma(value: float) -> float:
+        s_bus = {}
+
+        def power_sigma(value: float, p: float, q: float, s_local: float = 0.0) -> float:
             return max(power_sigma_mva_min, abs(value) * power_sigma_relative)
 
     for bus in net.bus.index:
@@ -818,7 +996,7 @@ def synthetic_full_measurements_from_results(
                         kind="p_inj",
                         element=int(bus),
                         value=p_value,
-                        sigma=power_sigma(p_value),
+                        sigma=power_sigma(p_value, p_value, q_value, s_bus.get(int(bus), 0.0)),
                     )
                 )
                 measurements.append(
@@ -826,7 +1004,7 @@ def synthetic_full_measurements_from_results(
                         kind="q_inj",
                         element=int(bus),
                         value=q_value,
-                        sigma=power_sigma(q_value),
+                        sigma=power_sigma(q_value, p_value, q_value, s_bus.get(int(bus), 0.0)),
                     )
                 )
         else:
@@ -848,7 +1026,7 @@ def synthetic_full_measurements_from_results(
                         side=side,  # type: ignore[arg-type]
                         branch_kind="line",
                         value=p_value,
-                        sigma=power_sigma(p_value),
+                        sigma=power_sigma(p_value, p_value, q_value),
                     )
                 )
                 measurements.append(
@@ -858,7 +1036,7 @@ def synthetic_full_measurements_from_results(
                         side=side,  # type: ignore[arg-type]
                         branch_kind="line",
                         value=q_value,
-                        sigma=power_sigma(q_value),
+                        sigma=power_sigma(q_value, p_value, q_value),
                     )
                 )
 
@@ -877,7 +1055,7 @@ def synthetic_full_measurements_from_results(
                             side=branch_side,
                             branch_kind="trafo",
                             value=p_value,
-                            sigma=power_sigma(p_value),
+                            sigma=power_sigma(p_value, p_value, q_value),
                         )
                     )
                     measurements.append(
@@ -887,8 +1065,16 @@ def synthetic_full_measurements_from_results(
                             side=branch_side,
                             branch_kind="trafo",
                             value=q_value,
-                            sigma=power_sigma(q_value),
+                            sigma=power_sigma(q_value, p_value, q_value),
                         )
                     )
 
+    from .sensor_calibration import audit_power_sigmas
+
+    pq = [m for m in measurements if m.kind in ("p_inj", "q_inj", "p_branch", "q_branch")]
+    audit_power_sigmas(
+        [m.value for m in pq], [m.sigma for m in pq], [rel_power] * len(pq),
+        [f"{m.kind}:{m.element}{':' + m.side if m.side else ''}" for m in pq],
+        magnitudes=_pair_magnitudes(pq), context="synthetic_full_measurements_from_results: ",
+    )
     return measurements

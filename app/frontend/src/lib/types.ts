@@ -14,8 +14,15 @@ export interface Bus {
    *  voltage (unlike pGen/gen). Typical of PV/wind DG on MV/LV feeders. */
   pGenDG?: number
   qGenDG?: number
+  /** Bus shunt (capacitor/reactor) in pu, consumption at V = 1 pu — same
+   *  convention as pandapower's net.shunt: qShunt < 0 is a capacitor bank. */
+  pShunt?: number
+  qShunt?: number
   qMin?: number
   qMax?: number
+  /** Nominal voltage level in kV (pandapower cases). Drives the per-level
+   *  colours of the one-line diagram. */
+  nominal_voltage_kv?: number
   geoX?: number
   geoY?: number
 }

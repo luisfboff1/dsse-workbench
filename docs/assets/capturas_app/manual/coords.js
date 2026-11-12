@@ -1,6 +1,6 @@
 // Gerado por scripts/capturar_screenshots_app.py -- nao editar a mao.
 window.MANUAL_COORDS = {
-  "geradoEm": "2026-09-09 12:02",
+  "geradoEm": "2026-11-12 12:27",
   "figuras": {
     "ui_header": {
       "w": 1600,
@@ -57,7 +57,7 @@ window.MANUAL_COORDS = {
         "console.snapshot": {
           "x": 533.203125,
           "y": 70.125,
-          "w": 266.421875,
+          "w": 261.890625,
           "h": 13
         }
       }
@@ -88,7 +88,7 @@ window.MANUAL_COORDS = {
     },
     "console_alarms": {
       "w": 752,
-      "h": 874,
+      "h": 891,
       "pins": {
         "console.alarms": {
           "x": 45.0,
@@ -100,7 +100,7 @@ window.MANUAL_COORDS = {
     },
     "console_telemetry": {
       "w": 1590,
-      "h": 431,
+      "h": 433,
       "pins": {
         "console.telemetry": {
           "x": 27.5,
@@ -112,7 +112,7 @@ window.MANUAL_COORDS = {
     },
     "overview_console": {
       "w": 1600,
-      "h": 1774,
+      "h": 1794,
       "pins": {}
     },
     "baddata_setup": {
@@ -373,7 +373,7 @@ window.MANUAL_COORDS = {
     },
     "overview_pipeline": {
       "w": 1600,
-      "h": 1797,
+      "h": 1799,
       "pins": {}
     },
     "workbench_blocks": {
@@ -396,7 +396,7 @@ window.MANUAL_COORDS = {
     },
     "workbench_results": {
       "w": 1590,
-      "h": 562,
+      "h": 582,
       "pins": {
         "workbench.compare": {
           "x": 31,
@@ -408,7 +408,7 @@ window.MANUAL_COORDS = {
     },
     "overview_workbench": {
       "w": 1600,
-      "h": 1622,
+      "h": 1642,
       "pins": {}
     },
     "powerflow_controls": {
@@ -449,19 +449,19 @@ window.MANUAL_COORDS = {
     },
     "powerflow_results": {
       "w": 1254,
-      "h": 453,
+      "h": 482,
       "pins": {
         "powerflow.buses": {
           "x": 20,
           "y": 20.0,
           "w": 631.578125,
-          "h": 413
+          "h": 441.5
         },
         "powerflow.branches": {
           "x": 665.578125,
           "y": 20.0,
           "w": 568.421875,
-          "h": 413
+          "h": 441.5
         }
       }
     },
@@ -537,11 +537,11 @@ window.MANUAL_COORDS = {
     },
     "topology_source": {
       "w": 441,
-      "h": 115,
+      "h": 117,
       "pins": {
         "topology.case": {
           "x": 187.53125,
-          "y": 57.5,
+          "y": 59.25,
           "w": 227.5,
           "h": 31.5
         },
@@ -554,36 +554,36 @@ window.MANUAL_COORDS = {
       }
     },
     "topology_diagram": {
-      "w": 442,
-      "h": 76,
+      "w": 697,
+      "h": 107,
       "pins": {
         "topology.spatial": {
-          "x": 26.0,
+          "x": 113.171875,
           "y": 26.0,
           "w": 70.921875,
           "h": 24.5
         },
         "topology.tree": {
-          "x": 102.171875,
+          "x": 189.34375,
           "y": 26.0,
           "w": 61.21875,
           "h": 24.5
         },
         "topology.fit": {
-          "x": 168.640625,
+          "x": 321.859375,
           "y": 26.0,
           "w": 51.171875,
           "h": 24.5
         },
         "topology.meters": {
-          "x": 225.0625,
+          "x": 597.234375,
           "y": 26.0,
           "w": 73.859375,
           "h": 24.5
         },
         "topology.switches": {
-          "x": 304.171875,
-          "y": 26.0,
+          "x": 26.0,
+          "y": 56.75,
           "w": 111.78125,
           "h": 24.5
         }
@@ -595,13 +595,13 @@ window.MANUAL_COORDS = {
       "pins": {
         "topology.apply_all": {
           "x": 28.0,
-          "y": 28,
+          "y": 28.0,
           "w": 72.875,
           "h": 12
         },
         "topology.meter_class": {
           "x": 28.0,
-          "y": 49,
+          "y": 49.0,
           "w": 191.5,
           "h": 31.5
         },
@@ -615,11 +615,11 @@ window.MANUAL_COORDS = {
     },
     "topology_switches_panel": {
       "w": 1590,
-      "h": 841,
+      "h": 858,
       "pins": {
         "topology.switch_list": {
-          "x": 1442.21875,
-          "y": 67.75,
+          "x": 789.046875,
+          "y": 92.375,
           "w": 109.78125,
           "h": 24.5
         }
@@ -627,7 +627,7 @@ window.MANUAL_COORDS = {
     },
     "topology_buses": {
       "w": 804,
-      "h": 548,
+      "h": 586,
       "pins": {
         "topology.bus_table": {
           "x": 38,
@@ -645,7 +645,7 @@ window.MANUAL_COORDS = {
     },
     "topology_lines": {
       "w": 804,
-      "h": 548,
+      "h": 586,
       "pins": {
         "topology.line_table": {
           "x": 38,
@@ -663,12 +663,12 @@ window.MANUAL_COORDS = {
     },
     "overview_topology": {
       "w": 1600,
-      "h": 1655,
+      "h": 1715,
       "pins": {}
     },
     "help_navigation": {
       "w": 1570,
-      "h": 1304,
+      "h": 1462,
       "pins": {
         "help.filter": {
           "x": 125.109375,
@@ -692,7 +692,7 @@ window.MANUAL_COORDS = {
     },
     "overview_help": {
       "w": 1600,
-      "h": 1379,
+      "h": 1537,
       "pins": {}
     }
   }

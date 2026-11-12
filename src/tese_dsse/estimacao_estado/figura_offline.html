@@ -1,0 +1,167 @@
+<div class="offl" id="offl-__UID__" lang="pt-BR">
+<style>
+#offl-__UID__ { --o-bg: var(--surface, #ffffff); --o-sunk: var(--sunk, #f6f7f9); --o-ink: var(--ink, #1c2230);
+  --o-mut: var(--muted, #646d7c); --o-rule: var(--rule, #d6dbe3); --o-par: var(--par, #9a6400);
+  --o-flow: var(--accent, #2f5aa8); --o-load: var(--bad, #b8323f);
+  background: var(--o-bg); color: var(--o-ink); border: 1px solid var(--o-rule); border-radius: 8px;
+  padding: 12px; font: 14px/1.5 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
+.box > .body > #offl-__UID__ { border: 0; padding: 0; }  /* dentro de uma caixa do guia: sem borda dupla */
+#offl-__UID__ .bar { margin: 0 0 8px; }
+#offl-__UID__ .bar span { color: var(--o-mut); font-size: 12px; margin-right: 6px; }
+#offl-__UID__ button { font: inherit; font-size: 12.5px; padding: 3px 9px; margin: 2px 2px; border-radius: 999px;
+  border: 1px solid var(--o-rule); background: var(--o-sunk); color: var(--o-ink); cursor: pointer; }
+#offl-__UID__ button.on { background: var(--o-ink); color: var(--o-bg); border-color: var(--o-ink); }
+#offl-__UID__ .grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 760px) { #offl-__UID__ .grid { grid-template-columns: 1fr; } }
+#offl-__UID__ svg { width: 100%; height: auto; display: block; }
+#offl-__UID__ svg.net { max-height: 640px; }
+#offl-__UID__ svg text { fill: var(--o-ink); font-size: 13px; }
+#offl-__UID__ svg.side text { font-size: 12px; }
+#offl-__UID__ svg.net text.rot { font-size: 11px; }
+#offl-__UID__ svg.net text.mut { fill: var(--o-mut); font-size: 10px; }
+#offl-__UID__ .txt { text-align: justify; hyphens: auto; margin: 8px 0 0; }
+#offl-__UID__ .leg { color: var(--o-mut); font-size: 12px; margin-top: 4px; }
+</style>
+<div class="bar"><span>mostrar</span><span class="modos"></span></div>
+<div class="bar"><span>linha ℓ</span><span class="linhas"></span></div>
+<div class="grid">
+  <div><svg class="net" role="img" aria-label="Diagrama unifilar da rede"></svg><div class="leg"></div></div>
+  <div><svg class="side" viewBox="0 0 400 260" role="img" aria-label="Gráfico lateral"></svg><p class="txt"></p></div>
+</div>
+<script>
+(function () {
+  const D = __DADOS__;
+  const R = document.getElementById("offl-__UID__");
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, at, pai, txt) => { const e = document.createElementNS(NS, tag);
+    for (const k in at) e.setAttribute(k, at[k]); if (txt !== undefined) e.textContent = txt; if (pai) pai.appendChild(e); return e; };
+  const fmt = (v, d = 2) => v.toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const norma = v => Math.sqrt(v.reduce((a, x) => a + x * x, 0));
+  const MODOS = { s: "Sℓ: impressão digital", M: "M = (I−K)Sℓ: o que sobra no resíduo", d: "δℓ: 1 " + D.unid + " entre as pontas" };
+  let modo = "s", linha = Object.keys(D.linhas)[0];
+
+  // onde cada medidor fica: na barra (V, injeção) ou na ponta de um ramo (fluxo)
+  const onde = m => m.k.endsWith("_branch") ? (m.ramo === "line" ? "L" : "T") + m.e + (m.lado === "from" ? "f" : "t") : "b" + m.e;
+  // numero exibido de barra e linha (D.rb, D.rl): o indice do pandapower no notebook, o id do app no app
+  const B = b => D.rb[b] ?? b, LL = l => "L" + (D.rl[l] ?? l), TT = t => (D.rt || {})[t] ?? "T" + t;
+  const nome = m => m.k === "v_bus" ? "|V| barra " + B(m.e) : m.k === "va_bus" ? "θ barra " + B(m.e)
+    : m.k.endsWith("_inj") ? m.k[0].toUpperCase() + " inj barra " + B(m.e)
+    : m.k[0].toUpperCase() + " " + (m.ramo === "line" ? LL(m.e) : TT(m.e)) + " (" + (m.lado === "from" ? "de" : "para") + ")";
+  const ramoDaLinha = l => D.ramos.find(r => r.tipo === "line" && r.id === +l);
+
+  function botoes() {
+    const bm = R.querySelector(".modos"), bl = R.querySelector(".linhas");
+    bm.innerHTML = ""; bl.innerHTML = "";
+    for (const k in MODOS) { const b = document.createElement("button"); b.textContent = MODOS[k];
+      b.className = k === modo ? "on" : ""; b.onclick = () => { modo = k; tudo(); }; bm.appendChild(b); }
+    for (const l in D.linhas) { const b = document.createElement("button"); b.textContent = LL(l);
+      b.className = l === linha ? "on" : ""; b.onclick = () => { linha = l; tudo(); }; bl.appendChild(b); }
+  }
+
+  // ponto a uma distância d ao longo da rota ortogonal, e o meio do maior segmento (para rótulos)
+  const aoLongo = (pts, d) => { for (let k = 1; k < pts.length; k++) { const [ax, ay] = pts[k - 1], [bx, by] = pts[k], s = Math.hypot(bx - ax, by - ay);
+      if (d <= s || k === pts.length - 1) { const u = Math.min(1, d / (s || 1)); return [ax + u * (bx - ax), ay + u * (by - ay)]; } d -= s; } };
+  const meio = pts => { let mx = -1, k0 = 1; for (let k = 1; k < pts.length; k++) { const s = Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
+      if (s > mx) { mx = s; k0 = k; } } return [(pts[k0 - 1][0] + pts[k0][0]) / 2, (pts[k0 - 1][1] + pts[k0][1]) / 2]; };
+  const caixa = (() => { let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const b in D.nos) { const [x, y, w] = D.nos[b]; x0 = Math.min(x0, x - 24); y0 = Math.min(y0, y - 20); x1 = Math.max(x1, x + w + 8); y1 = Math.max(y1, y + 40); }
+    D.ramos.forEach(r => r.rota.forEach(([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x + 30); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }));
+    return [x0, y0, x1 - x0, y1 - y0]; })();
+
+  function rede() {
+    const svg = R.querySelector(".net"); svg.innerHTML = ""; svg.setAttribute("viewBox", caixa.join(" "));
+    const L = D.linhas[linha], vet = modo === "M" ? L.M : L.s;
+    const escala = Math.max(...L.s.map(Math.abs)) || 1;       // mesma escala em S e M: dá para ver o que some
+    const val = {}, lista = {};
+    D.medidores.forEach((m, i) => { const o = onde(m); val[o] = Math.max(val[o] || 0, Math.abs(vet[i]));
+      (lista[o] = lista[o] || []).push(nome(m) + ": " + fmt(vet[i]) + " σ"); });
+    const cor = o => modo === "d" ? "var(--o-bg)"
+      : `color-mix(in srgb, var(--o-par) ${Math.round(100 * Math.min(1, (val[o] || 0) / escala))}%, var(--o-bg))`;
+    const pts2 = pts => pts.map(p => p.join(",")).join(" ");
+
+    D.ramos.forEach((r, j) => {
+      const sel = r.tipo === "line" && String(r.id) === linha, f = L.fluxos[j], pts = r.rota;
+      const w = modo === "d" ? 1.2 + 14 * Math.abs(f) : 1.4;
+      if (sel) el("polyline", { points: pts2(pts), fill: "none", stroke: "var(--o-par)", "stroke-width": w + 8, opacity: .3, "stroke-linejoin": "round" }, svg);
+      const ln = el("polyline", { points: pts2(pts), fill: "none", stroke: modo === "d" ? "var(--o-flow)" : "var(--o-ink)",
+        "stroke-width": w, "stroke-dasharray": r.tipo === "trafo" ? "6 4" : "", style: r.tipo === "line" ? "cursor:pointer" : "" }, svg);
+      el("title", {}, ln, (r.tipo === "line" ? LL(r.id) : TT(r.id) + " (trafo)") + (modo === "d" ? ": " + fmt(100 * f, 1) + "% do 1 " + D.unid : ""));
+      if (r.tipo === "line" && D.linhas[r.id] !== undefined) ln.onclick = () => { linha = String(r.id); tudo(); };
+      const [mx, my] = meio(pts);
+      if (modo === "d") { if (Math.abs(f) > 0.02) el("text", { x: mx + 5, y: my - 4, "font-weight": sel ? 700 : 400, class: "rot" }, svg, Math.round(100 * Math.abs(f)) + "%"); }
+      else el("text", { x: mx + 5, y: my - 4, class: "rot mut" }, svg, r.tipo === "line" ? LL(r.id) : TT(r.id));
+      [["f", pts], ["t", [...pts].reverse()]].forEach(([lado, p]) => {
+        const o = (r.tipo === "line" ? "L" : "T") + r.id + lado, [qx, qy] = aoLongo(p, 18);
+        if (!lista[o]) return;
+        const q = el("rect", { x: qx - 5, y: qy - 5, width: 10, height: 10, rx: 2, fill: cor(o), stroke: "var(--o-flow)", "stroke-width": 1 }, svg);
+        el("title", {}, q, lista[o].join("\n"));
+      });
+    });
+    for (const b in D.nos) {
+      const [x, y, w] = D.nos[b], gen = +b === D.slack || D.geradores.includes(+b);
+      el("rect", { x, y, width: w, height: 8, fill: "var(--o-ink)" }, svg);
+      el("text", { x: x + 4, y: y - 6, class: "rot", "font-weight": 600 }, svg, (gen ? "Gen " : "Bus ") + B(b));
+      if (gen) { const gx = x + w - 18;                                      // gerador pendurado na barra (slack escuro)
+        el("line", { x1: gx, y1: y + 8, x2: gx, y2: y + 14, stroke: "var(--o-ink)" }, svg);
+        el("circle", { cx: gx, cy: y + 23, r: 9, fill: +b === D.slack ? "var(--o-ink)" : "var(--o-bg)", stroke: "var(--o-ink)" }, svg);
+        el("text", { x: gx, y: y + 27, "text-anchor": "middle", class: "rot", style: +b === D.slack ? "fill:var(--o-bg)" : "" }, svg, +b === D.slack ? "~" : "G"); }
+      if (D.cargas.includes(+b)) { const cx = x + 14;                        // carga: seta vermelha para baixo
+        el("line", { x1: cx, y1: y + 8, x2: cx, y2: y + 24, stroke: "var(--o-load)", "stroke-width": 1.6 }, svg);
+        el("polygon", { points: `${cx - 5},${y + 22} ${cx + 5},${y + 22} ${cx},${y + 30}`, fill: "var(--o-load)" }, svg); }
+      const c = el("circle", { cx: x - 12, cy: y + 4, r: 7, fill: cor("b" + b), stroke: "var(--o-flow)", "stroke-width": 1.2 }, svg);
+      el("title", {}, c, (lista["b" + b] || []).join("\n"));
+      el("text", { x: x - 12, y: y + 7.5, "text-anchor": "middle", class: "rot", style: "fill:var(--o-flow);font-weight:700;pointer-events:none" }, svg, "S");
+    }
+    R.querySelector(".leg").textContent = modo === "d"
+      ? "Largura e % de cada ramo: quanto do 1 " + D.unid + " injetado passa por ele (PTDF DC). Tracejado: transformador. Clique numa linha para escolher."
+      : `Cor: |valor| em σ para um erro de ${fmt(100 * D.t_ref, 0)}% na linha, escala de 0 a ${fmt(escala)} σ (a mesma nos dois modos). `
+        + "Círculo S: medidores da barra (|V|, P e Q de injeção). Quadrado: fluxos P e Q daquela ponta do ramo. Passe o mouse para os valores; clique numa linha para escolher.";
+  }
+
+  function lado() {
+    const svg = R.querySelector(".side"); svg.innerHTML = "";
+    const L = D.linhas[linha], r = ramoDaLinha(linha), d = L.delta;
+    if (modo !== "d") {
+      const vet = modo === "M" ? L.M : L.s, esc = Math.max(...L.s.map(Math.abs)) || 1;
+      const top = D.medidores.map((m, i) => [nome(m), vet[i]]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 9);
+      el("text", { x: 0, y: 14, "font-weight": 600 }, svg, "Os 9 maiores, em σ (erro de " + fmt(100 * D.t_ref, 0) + "%)");
+      top.forEach(([n, v], k) => { const y = 32 + k * 24;
+        el("text", { x: 0, y: y + 12 }, svg, n);
+        el("rect", { x: 140, y, width: Math.max(1, 200 * Math.abs(v) / esc), height: 15, fill: "var(--o-par)", opacity: v < 0 ? .55 : 1 }, svg);
+        el("text", { x: 144 + 200 * Math.abs(v) / esc, y: y + 12 }, svg, fmt(v)); });
+    } else {
+      const c = t => t / (1 + t * d), ymin = Math.min(-1.2, c(-1)), X = t => 20 + 360 * (t + 1) / 2, Y = v => 34 + 210 * (1 - v) / (1 - ymin);
+      el("line", { x1: X(-1), y1: Y(0), x2: X(1), y2: Y(0), stroke: "var(--o-rule)" }, svg);
+      el("line", { x1: X(0), y1: Y(1), x2: X(0), y2: Y(ymin), stroke: "var(--o-rule)" }, svg);
+      el("line", { x1: X(-1), y1: Y(-1), x2: X(1), y2: Y(1), stroke: "var(--o-mut)", "stroke-dasharray": "4 3" }, svg);
+      el("text", { x: X(1) - 4, y: Y(1) - 6, "text-anchor": "end", style: "fill:var(--o-mut)" }, svg, "c = t (sem deformação, δ = 0)");
+      let p = ""; for (let t = -1; t <= 1.0001; t += .02) p += (p ? "L" : "M") + X(t) + "," + Y(c(t));
+      el("path", { d: p, fill: "none", stroke: "var(--o-par)", "stroke-width": 2.5 }, svg);
+      [[-0.1, "−10%"], [-0.7, "−70%"], [-1, "abrir"]].forEach(([t, rot]) => {
+        el("circle", { cx: X(t), cy: Y(c(t)), r: 4.5, fill: "var(--o-par)" }, svg);
+        el("text", { x: X(t) + 9, y: Y(c(t)) + (t === -0.1 ? 18 : 4) }, svg, rot + ": c = " + fmt(c(t))); });
+      el("text", { x: 0, y: 14, "font-weight": 600 }, svg, "c que o estimador vê × t real (δ = " + fmt(d) + ")");
+      el("text", { x: X(1) - 4, y: Y(0) - 6, "text-anchor": "end" }, svg, "t");
+    }
+    const nS = norma(L.s), nM = norma(L.M), folga = D.limiar - (D.m - D.n);
+    const ponta = `<b>Linha ${LL(linha)}</b> (barras ${B(r.de)}–${B(r.para)}, fluxo ${fmt(L.P_MW, D.unid === "pu" ? 3 : 1)} ${D.unid}). `;
+    R.querySelector(".txt").innerHTML = modo === "s"
+      ? ponta + `Um erro de ${fmt(100 * D.t_ref, 0)}% no cadastro dela, com o estado parado, move cada medidor do valor ao lado, em desvios-padrão. `
+        + `Só acendem os medidores da própria linha e das duas barras dela, e o tamanho acompanha o fluxo da linha. Em σ, um medidor preciso (σ pequeno) acende mais que um impreciso para a mesma variação em ${D.unid}. Comprimento total: ‖${fmt(D.t_ref, 1)}·S‖<sub>W</sub> = ${fmt(nS)} σ.`
+      : modo === "M"
+      ? ponta + `O estimador ajusta os ângulos para explicar o que consegue, e parte da impressão digital some no estado (a cor se espalha e enfraquece). `
+        + `Sobra ‖${fmt(D.t_ref, 1)}·M‖<sub>W</sub> = ${fmt(nM)} σ, ou ρ = ${fmt(100 * nM / nS, 0)}% do comprimento de S. `
+        + `Ordem de grandeza: o χ² tem folga de ${fmt(folga, 0)} acima da média do ruído (limiar ${fmt(D.limiar, 1)} − (m−n) = ${D.m - D.n}); aqui ‖M‖² = ${fmt(nM * nM, 1)}: `
+        + (nM * nM < folga / 2 ? "bem abaixo da folga, um erro desse tamanho nesta linha tende a passar sem disparar."
+          : nM * nM > 2 * folga ? "bem acima da folga, um erro desse tamanho nesta linha tende a disparar."
+          : "perto da folga, um erro desse tamanho nesta linha dispara em parte das realizações de ruído.")
+      : ponta + `Injetando 1 ${D.unid} na barra ${B(r.de)} e retirando na ${B(r.para)}, δ = ${fmt(100 * d, 0)}% passa pela própria linha; o resto dá a volta pelos caminhos paralelos. `
+        + `δ perto de 1: quase não há rota alternativa. Quando o cadastro da linha está errado, o fluxo real também já se redistribuiu, e o estimador vê o erro deformado: c = t/(1+tδ). `
+        + `Nesta linha, −10% aparece como c = ${fmt(-0.1 / (1 - 0.1 * d))}, −70% como ${fmt(-0.7 / (1 - 0.7 * d))} e abrir como ${fmt(-1 / (1 - d))}. O t̂ = c/(1−cδ) desfaz isso.`;
+  }
+
+  function tudo() { botoes(); rede(); lado(); }
+  tudo();
+})();
+</script>
+</div>

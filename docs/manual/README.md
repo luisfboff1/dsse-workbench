@@ -13,11 +13,11 @@ cadeia de medição, console e agentes).
 
 Documentação vizinha, com outro propósito:
 
-- [docs/ARQUITETURA.md](../ARQUITETURA.md) — como o app é montado por dentro
+- [temas/workbench_app/ARQUITETURA.md](../../temas/workbench_app/ARQUITETURA.md) — como o app é montado por dentro
   (backend, API, fluxo de dados). Referência de quem desenvolve.
 - [packaging/README.md](../../packaging/README.md) — empacotamento, instalador
   e publicação de versão.
-- [docs/planejamento/cadeia_operacional_validacao.md](../planejamento/cadeia_operacional_validacao.md)
+- [temas/cadeia_scada/cadeia_operacional_validacao.md](../../temas/cadeia_scada/cadeia_operacional_validacao.md)
   — roteiro de validação da cadeia operacional.
 - A aba **Help** do próprio app — documentação matemática (algoritmos,
   equações, métodos de bad data), mantida em

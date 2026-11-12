@@ -5,7 +5,7 @@ O plano de medicao nao e detalhe de montagem do caso -- e uma variavel de
 projeto que muda o que o estimador consegue detectar. Dois planos com o mesmo
 numero de medicoes e magnitudes de erro identicas dao resultados opostos se a
 variancia for homogenea num e heterogenea no outro (hipotese A4 de
-`docs/planejamento/artigo_bad_data_conferencia.md`).
+`temas/bad_data/artigo_bad_data_conferencia.md`).
 
 Dois planos implementados:
 
@@ -18,7 +18,7 @@ Dois planos implementados:
   em pontos de grande variacao. E o plano com que eles detectam falha de banco
   de 400 kvar com `r^N = 201,8`.
 
-Ver `docs/estudos/estimacao_estado/literatura/crawford_baran_2026_signature_topology_dsse.md`.
+Ver `temas/revisao_bibliografica/literatura/crawford_baran_2026_signature_topology_dsse.md`.
 """
 from __future__ import annotations
 

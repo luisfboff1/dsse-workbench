@@ -12,6 +12,7 @@ import type { Topology, Bus, Line, MeasurementKind, OpenSwitch } from '@/lib/typ
 import { DEFAULT_TOPOLOGIES } from '@/lib/topologies'
 import { TopologyDiagram } from '@/components/TopologyDiagram'
 import { AttributeExplorer } from '@/components/AttributeExplorer'
+import { ElementInspector } from '@/components/ElementInspector'
 import { EMPTY_SELECTION, type TopologySelection } from '@/lib/selection'
 import { ImportTopologyDialog } from './ImportTopologyDialog'
 import { ExportTopologyDropdown } from './ExportTopologyDropdown'
@@ -485,6 +486,15 @@ export function TopologyTab({ topology, onTopologyChange }: TopologyTabProps) {
             selection={selection}
             onSelectionChange={setSelection}
             onSetMeterKind={setMeterKindBulk}
+          />
+        }
+        inspector={
+          <ElementInspector
+            topology={topology}
+            selection={selection}
+            onSelectionChange={setSelection}
+            onSetBusMeter={setMeasurementKind}
+            onSetLineMeter={setLineMeasurementKind}
           />
         }
       />

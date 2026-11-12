@@ -33,6 +33,10 @@ class BusInput(BaseModel):
     qGenDG: float = 0.0
     qMin: float = -0.3
     qMax: float = 0.3
+    # Shunt de barra em pu, consumo a V = 1 pu (convencao do net.shunt do
+    # pandapower): qShunt < 0 e banco de capacitor.
+    pShunt: float = 0.0
+    qShunt: float = 0.0
     geoX: float | None = None
     geoY: float | None = None
 
@@ -44,6 +48,9 @@ class LineInput(BaseModel):
     resistance: float
     reactance: float
     susceptance: float = 0.0
+    # Relacao de transformacao fora do nominal (tap no lado "from"). Presente e
+    # != 1: build_net_from_frontend monta o ramo como trafo, nao como linha.
+    tapRatio: float | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -256,9 +263,12 @@ def _extract_results(net: Any, bus_id_map: dict[int, int]) -> dict:
             except KeyError:
                 p_from = q_from = p_to = q_to = pl = 0.0
 
+            nome = str(net.line.at[line_idx, "name"] or "")
             lines_out.append(
                 {
-                    "id": int(line_idx) + 1,
+                    # id do frontend: build_net_from_frontend nomeia a linha "L{id}".
+                    # (idx + 1 so coincidia quando os ids eram 1..n sem trafo no meio)
+                    "id": int(nome[1:]) if nome[:1] == "L" and nome[1:].isdigit() else int(line_idx) + 1,
                     "from": pp_to_frontend.get(int(net.line.at[line_idx, "from_bus"])),
                     "to": pp_to_frontend.get(int(net.line.at[line_idx, "to_bus"])),
                     "pFrom": round(p_from, 5),
@@ -266,6 +276,26 @@ def _extract_results(net: Any, bus_id_map: dict[int, int]) -> dict:
                     "pTo": round(p_to, 5),
                     "qTo": round(q_to, 5),
                     "loss": round(abs(pl), 6),
+                }
+            )
+
+    # Ramos-trafo (tap fora do nominal, BUG-011): mesmo formato, id do frontend
+    # em net.trafo["frontend_id"]; lado "from" = AT.
+    if len(net.trafo) > 0 and "frontend_id" in net.trafo.columns and len(net.res_trafo) > 0:
+        for t in net.trafo.index:
+            if not bool(net.trafo.at[t, "in_service"]):
+                continue
+            rt = net.res_trafo.loc[t]
+            lines_out.append(
+                {
+                    "id": int(net.trafo.at[t, "frontend_id"]),
+                    "from": pp_to_frontend.get(int(net.trafo.at[t, "hv_bus"])),
+                    "to": pp_to_frontend.get(int(net.trafo.at[t, "lv_bus"])),
+                    "pFrom": round(float(rt.p_hv_mw) / BASE_MVA, 5),
+                    "qFrom": round(float(rt.q_hv_mvar) / BASE_MVA, 5),
+                    "pTo": round(float(rt.p_lv_mw) / BASE_MVA, 5),
+                    "qTo": round(float(rt.q_lv_mvar) / BASE_MVA, 5),
+                    "loss": round(abs(float(rt.pl_mw)) / BASE_MVA, 6),
                 }
             )
 

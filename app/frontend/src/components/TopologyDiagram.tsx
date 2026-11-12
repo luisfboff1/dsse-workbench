@@ -13,9 +13,12 @@ import {
 import { TopologyCanvasView, type TopologyCanvasHandle } from '@/components/TopologyCanvasView'
 import { EMPTY_SELECTION, selectOnly, toggleInSelection, type TopologySelection } from '@/lib/selection'
 import type { TopologyMapHandle } from '@/components/TopologyMapView'
+import type { OneLineHandle } from '@/components/OneLineView'
 
 // MapLibre is the heaviest dependency in the app: keep it out of the main
-// bundle until someone actually opens the Map view.
+// bundle until someone actually opens the Map view. The one-line view (ELK
+// layout engine) follows the same rule.
+const OneLineView = lazy(() => import('@/components/OneLineView').then((m) => ({ default: m.OneLineView })))
 const TopologyMapView = lazy(() => import('@/components/TopologyMapView').then((m) => ({ default: m.TopologyMapView })))
 import { useVirtualRows } from '@/hooks/useVirtualRows'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -24,7 +27,7 @@ import { Popover, PopoverContent, PopoverAnchor, PopoverTrigger } from '@/compon
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { Network, TreeStructure, ArrowsOut, ArrowsDownUp, ArrowsLeftRight, Gauge, List, X, ToggleRight, ArrowCounterClockwise, Lightning, Sparkle, Atom, MapTrifold, Table } from '@phosphor-icons/react'
+import { Network, TreeStructure, ArrowsOut, ArrowsDownUp, ArrowsLeftRight, Gauge, List, X, ToggleRight, ArrowCounterClockwise, Lightning, Sparkle, Atom, MapTrifold, Table, FlowArrow, Info } from '@phosphor-icons/react'
 import type { Switch as SwitchType } from '@/lib/types'
 
 interface TopologyDiagramProps {
@@ -56,9 +59,13 @@ interface TopologyDiagramProps {
   /** Attribute table shown in a dock beside the diagram, toggled by the
    *  "Table" button in the toolbar. */
   explorer?: ReactNode
+  /** Properties panel for the selected bus/line, shown in the same side dock.
+   *  When provided, clicking an element opens it instead of the meter popover
+   *  (the panel carries the meter picker). */
+  inspector?: ReactNode
 }
 
-type ViewMode = 'spatial' | 'tree' | 'map'
+type ViewMode = 'spatial' | 'tree' | 'map' | 'oneline'
 
 const DOCK_MIN = 320
 const DOCK_DEFAULT = 460
@@ -148,20 +155,27 @@ function elbowPath(source: Node, target: Node, orientation: TreeOrientation): st
   return `M${sx},${sy} L${midX},${sy} L${midX},${ty} L${tx},${ty}`
 }
 
-export function TopologyDiagram({ topology, result, voltageLimits, compact = false, onMeasurementKindChange, onLineMeasurementKindChange, onApplyMeterToAll, onSwitchToggle, onResetSwitches, selection, onSelectionChange, explorer }: TopologyDiagramProps) {
+export function TopologyDiagram({ topology, result, voltageLimits, compact = false, onMeasurementKindChange, onLineMeasurementKindChange, onApplyMeterToAll, onSwitchToggle, onResetSwitches, selection, onSelectionChange, explorer, inspector }: TopologyDiagramProps) {
+  const [dockTab, setDockTab] = useState<'properties' | 'table'>('properties')
   // The SVG click handlers live inside the (dependency-heavy) draw effect; a
   // ref lets them read the current selection without redrawing the diagram.
   const selectionRef = useRef<TopologySelection>(selection ?? EMPTY_SELECTION)
   selectionRef.current = selection ?? EMPTY_SELECTION
-  // Returns true when the click was an additive (Ctrl/Cmd/Shift) selection
-  // toggle — the caller then skips the meter popover.
+  // Returns true when the click was fully handled by selection (an additive
+  // Ctrl/Cmd/Shift toggle, or the properties panel took over) — the caller
+  // then skips the meter popover.
   const selectFromDiagram = useCallback(
     (kind: 'bus' | 'line', id: number, additive: boolean): boolean => {
       if (!onSelectionChange) return false
       onSelectionChange(additive ? toggleInSelection(selectionRef.current, kind, id) : selectOnly(kind, id))
+      if (inspector) {
+        setTableOpen(true)
+        setDockTab('properties')
+        return true
+      }
       return additive
     },
-    [onSelectionChange]
+    [onSelectionChange, inspector]
   )
   const selectFromDiagramRef = useRef(selectFromDiagram)
   selectFromDiagramRef.current = selectFromDiagram
@@ -169,9 +183,16 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
   // branch, and this used to re-run on every single React render (a hover, a
   // popover open) rather than only when the topology actually changed.
   const allSwitches = useMemo(() => getTopologySwitches(topology), [topology])
+  // Normally-open switches, as ties for the one-line diagram. Memoised on the
+  // switch list so the view only re-lays-out when an open/close changes them.
+  const openTies = useMemo(
+    () => allSwitches.filter((s) => !s.closed).map((s) => ({ from: s.from, to: s.to })),
+    [allSwitches]
+  )
   const svgRef = useRef<SVGSVGElement>(null)
   const canvasHandleRef = useRef<TopologyCanvasHandle>(null)
   const mapHandleRef = useRef<TopologyMapHandle>(null)
+  const oneLineHandleRef = useRef<OneLineHandle>(null)
   const [tableOpen, setTableOpen] = useState(false)
   // Dock width in px, remembered across sessions; the table is a side panel
   // the user opens on demand and sizes to taste, not a permanent tenant of
@@ -256,7 +277,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
   // (measurement kinds live on the nodes) but that is O(n), not a re-layout,
   // because the force simulation resumes from the settled positions.
   const canvasLayout = useMemo(() => {
-    if (renderer !== 'canvas' || viewMode === 'map') return null
+    if (renderer !== 'canvas' || viewMode === 'map' || viewMode === 'oneline') return null
     const base =
       viewMode === 'spatial'
         ? computeSpatialLayout(topology, dimensions.width, dimensions.height, positionsRef.current, useForceLayout)
@@ -352,6 +373,10 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
   }, [compact])
 
   const fitToView = () => {
+    if (viewMode === 'oneline') {
+      oneLineHandleRef.current?.fit()
+      return
+    }
     if (viewMode === 'map') {
       mapHandleRef.current?.fit()
       return
@@ -424,11 +449,17 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
     const g = svg.append('g').attr('class', 'diagram-root')
 
     const updateZoomScale = (k: number) => {
-      const s = k > 1 ? 1 / Math.pow(k, 0.75) : 1
+      // Exponent close to 1: on screen a node then grows only ~k^0.1 as you
+      // zoom in (at the 50x limit ~1.5x), so it stays readable without
+      // swallowing its neighbours. It was 0.75, which made badges and glyphs
+      // balloon at deep zoom.
+      const s = k > 1 ? 1 / Math.pow(k, 0.9) : 1
       g.selectAll('.scalable-node').attr('transform', `scale(${s})`)
       g.selectAll('.scalable-label').attr('transform', `scale(${s})`)
       g.selectAll('.scalable-badge-inner').attr('transform', `scale(${s})`)
       g.selectAll('.scalable-switch-inner').attr('transform', `scale(${s})`)
+      // Line labels keep a constant on-screen size once zoomed in.
+      g.selectAll('.scalable-line-label').attr('transform', `scale(${k > 1 ? 1 / k : 1})`)
       if (topology.lines.length > 100) {
         g.selectAll('.link-labels-layer').style('opacity', k >= 1.8 ? 1 : 0)
       }
@@ -602,10 +633,17 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
         .attr('vector-effect', 'non-scaling-stroke')
 
       const labelsLayer = parent.append('g').attr('class', 'link-labels-layer')
+      // Each label sits in a host <g> that carries the position; the <text>
+      // inside is counter-scaled to a constant on-screen size on zoom (a bare
+      // <text> scaled with the diagram grew to hundreds of pixels).
       const labels = labelsLayer
-        .selectAll('text')
+        .selectAll('g')
         .data(links)
-        .join('text')
+        .join('g')
+      labels
+        .append('text')
+        .attr('class', 'scalable-line-label')
+        .attr('dy', -6)
         .attr('font-size', 9.5)
         .attr('fill', 'var(--color-muted-foreground)')
         .attr('text-anchor', 'middle')
@@ -622,15 +660,10 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
           .attr('y2', (d) => nodeById.get(d.to)?.y ?? 0)
         labels
           // Positioned near receiving bus (80% along the line)
-          .attr('x', (d) => {
-            const fx = nodeById.get(d.from)?.x ?? 0
-            const tx = nodeById.get(d.to)?.x ?? 0
-            return fx * 0.2 + tx * 0.8
-          })
-          .attr('y', (d) => {
-            const fy = nodeById.get(d.from)?.y ?? 0
-            const ty = nodeById.get(d.to)?.y ?? 0
-            return fy * 0.2 + ty * 0.8 - 6
+          .attr('transform', (d) => {
+            const from = nodeById.get(d.from)
+            const to = nodeById.get(d.to)
+            return `translate(${(from?.x ?? 0) * 0.2 + (to?.x ?? 0) * 0.8},${(from?.y ?? 0) * 0.2 + (to?.y ?? 0) * 0.8})`
           })
       }
       return { sel, labels, position }
@@ -873,7 +906,6 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
           .text((d: Node) => d.name)
       }
 
-      drawMeasurementBadge(sel, isDense ? 8 : 15, isDense ? 9 : 17)
       drawMeasurementBadge(inner, isDense ? 8 : 15, isDense ? 9 : 17)
       attachMeasurementClick(sel)
 
@@ -1260,20 +1292,25 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
             <CardDescription className="text-xs sm:text-sm">
               {result
                 ? 'Voltage is encoded by bus color; active flow by branch thickness'
-                : viewMode === 'map'
+                : viewMode === 'oneline'
+                  ? 'Single-line diagram - bus bars with orthogonal routing; handles meshed networks. Drag to pan, wheel to zoom'
+                  : viewMode === 'map'
                   ? 'Geographic view - buses and lines placed by their coordinates over OpenStreetMap; click to select, Ctrl/Shift-click to add'
                   : viewMode === 'spatial'
                   ? useForceLayout
                     ? 'Force-directed view - drag nodes to reposition them'
                     : 'Concentric view - rings are hops from the substation; drag nodes to reposition them'
                   : 'BFS spanning tree from the slack bus - loops and disconnected buses are flagged, not hidden'}
-              {!result && onMeasurementKindChange && ' - click a bus to assign its meter'}
-              {!result && onLineMeasurementKindChange && ', click a line to assign a branch-flow meter'}
+              {!result && onMeasurementKindChange && (inspector ? ' - click a bus or a line to see its data and assign its meter' : ' - click a bus to assign its meter')}
+              {!result && !inspector && onLineMeasurementKindChange && ', click a line to assign a branch-flow meter'}
               {isLargeNetwork && renderer === 'canvas' &&
                 ` - ${topology.buses.length} buses: fast rendering, labels hidden (zoom to inspect)`}
             </CardDescription>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
+            <Button type="button" size="sm" variant={viewMode === 'oneline' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setViewMode('oneline')} title="Single-line diagram: bus bars, orthogonal routing, works for meshed networks">
+              <FlowArrow className="w-3.5 h-3.5" /> One-line
+            </Button>
             <Button type="button" size="sm" variant={viewMode === 'spatial' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setViewMode('spatial')}>
               <Network className="w-3.5 h-3.5" /> Spatial
             </Button>
@@ -1316,7 +1353,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
                 has to be readable at a glance — a lone button showing "Fast"
                 is ambiguous about whether that is the current state or the
                 thing it will switch to. Same pattern as Spatial/Tree above. */}
-            <div className={`${viewMode === 'map' ? 'hidden' : 'flex'} items-center rounded-md border p-0.5`}>
+            <div className={`${viewMode === 'map' || viewMode === 'oneline' ? 'hidden' : 'flex'} items-center rounded-md border p-0.5`}>
               <Button
                 type="button"
                 size="sm"
@@ -1355,16 +1392,16 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
             >
               <List className="w-3.5 h-3.5" /> Meters
             </Button>
-            {explorer && (
+            {(explorer || inspector) && (
               <Button
                 type="button"
                 size="sm"
                 variant={tableOpen ? 'default' : 'outline'}
                 className="h-7 text-xs"
                 onClick={() => setTableOpen((v) => !v)}
-                title="Attribute table: filter and select buses/lines"
+                title="Side panel: properties of the selected element and the attribute table"
               >
-                <Table className="w-3.5 h-3.5" /> Table
+                <Table className="w-3.5 h-3.5" /> Details
               </Button>
             )}
             {onSwitchToggle && allSwitches.length > 0 && (
@@ -1398,7 +1435,28 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
           </div>
         )}
         <div ref={containerRef} className="relative border rounded-lg overflow-hidden bg-background">
-          {viewMode === 'map' ? (
+          {viewMode === 'oneline' ? (
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center text-sm text-muted-foreground" style={{ height: dimensions.height }}>
+                  Loading one-line view…
+                </div>
+              }
+            >
+              <OneLineView
+                ref={oneLineHandleRef}
+                topology={topology}
+                result={result}
+                voltageLimits={voltageLimits}
+                selection={selection}
+                openTies={openTies}
+                width={dimensions.width}
+                height={dimensions.height}
+                onBusClick={handleCanvasBusClick}
+                onLineClick={handleCanvasLineClick}
+              />
+            </Suspense>
+          ) : viewMode === 'map' ? (
             <Suspense
               fallback={
                 <div className="flex items-center justify-center text-sm text-muted-foreground" style={{ height: dimensions.height }}>
@@ -1707,6 +1765,39 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
               </div>
             )}
           </div>
+        ) : viewMode === 'oneline' ? (
+          <div className="mt-3 sm:mt-4 flex flex-wrap gap-3 sm:gap-6 text-xs sm:text-sm">
+            <div className="flex items-center gap-1.5">
+              <div className="h-1.5 w-7 rounded-sm bg-foreground" />
+              <span className="text-muted-foreground">Bus bar (colour = voltage level)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-4 h-4 rounded-full bg-primary border border-foreground flex items-center justify-center text-[9px] font-bold text-primary-foreground">~</div>
+              <span className="text-muted-foreground">Slack / external grid</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-4 h-4 rounded-full bg-card border border-foreground flex items-center justify-center text-[9px] font-bold">G</div>
+              <span className="text-muted-foreground">Generator</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-destructive text-base leading-none">&#8595;</span>
+              <span className="text-muted-foreground">Load</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3.5 h-3.5 rounded-full bg-method-ldf border border-foreground flex items-center justify-center text-[7px] font-bold text-primary-foreground">DG</div>
+              <span className="text-muted-foreground">Distributed gen.</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3.5 h-3.5 rounded-full bg-card border-2 border-method-dc flex items-center justify-center text-[7px] font-bold text-method-dc">S</div>
+              <span className="text-muted-foreground">Meter</span>
+            </div>
+            {allSwitches.some((s) => !s.closed) && (
+              <div className="flex items-center gap-1.5">
+                <div className="h-0 w-8 border-t-2 border-dashed border-muted-foreground" />
+                <span className="text-muted-foreground">open switch ({allSwitches.filter((s) => !s.closed).length})</span>
+              </div>
+            )}
+          </div>
         ) : viewMode === 'tree' ? (
           <div className="mt-3 sm:mt-4 flex flex-wrap gap-3 sm:gap-6 text-xs sm:text-sm">
             <div className="flex items-center gap-1.5">
@@ -1791,7 +1882,7 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
           </div>
         )}
         </div>
-        {explorer && tableOpen && (
+        {(explorer || inspector) && tableOpen && (
           <>
             <div
               onPointerDown={startDockResize}
@@ -1810,18 +1901,55 @@ export function TopologyDiagram({ topology, result, voltageLimits, compact = fal
               className="relative min-w-0 lg:w-[var(--dock-w)] lg:shrink-0"
               style={{ ['--dock-w' as string]: `${dockWidth}px` }}
             >
-              {explorer}
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="absolute right-1.5 top-1.5 h-6 w-6"
-                onClick={() => setTableOpen(false)}
-                aria-label="Collapse attribute table"
-                title="Collapse table"
-              >
-                <X className="w-3.5 h-3.5" />
-              </Button>
+              {inspector && (
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center rounded-md border p-0.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={dockTab === 'properties' ? 'default' : 'ghost'}
+                      className="h-6 px-2 text-xs"
+                      onClick={() => setDockTab('properties')}
+                    >
+                      <Info className="w-3.5 h-3.5" /> Properties
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={dockTab === 'table' ? 'default' : 'ghost'}
+                      className="h-6 px-2 text-xs"
+                      onClick={() => setDockTab('table')}
+                    >
+                      <Table className="w-3.5 h-3.5" /> Table
+                    </Button>
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6"
+                    onClick={() => setTableOpen(false)}
+                    aria-label="Collapse side panel"
+                    title="Collapse panel"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+              {inspector && dockTab === 'properties' ? inspector : explorer}
+              {!inspector && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute right-1.5 top-1.5 h-6 w-6"
+                  onClick={() => setTableOpen(false)}
+                  aria-label="Collapse attribute table"
+                  title="Collapse table"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              )}
             </div>
           </>
         )}

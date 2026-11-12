@@ -57,7 +57,7 @@ def sample_noisy_measurement(
     Única função de amostragem de ruído do projeto: app/backend/routes/
     estimation.py e baddata.py chamam esta função (antes reconstruíam
     `np.random.default_rng(seed).normal(0.0, sigma)` inline em 6 lugares
-    diferentes) e notebooks/simulacao/5_BUS_IEEE_bad_data_analytics.ipynb
+    diferentes) e notebooks/simulacao/2026-06-18_5_BUS_IEEE_bad_data_analytics.ipynb
     (seção 13, "Verificação vs. Workbench") também — com o mesmo `z_true`/
     `sigma`/`seed`, os três produzem o `z_noisy` EXATO, byte a byte, porque é
     literalmente a mesma chamada de RNG. Isso é o que torna a seção 13 do

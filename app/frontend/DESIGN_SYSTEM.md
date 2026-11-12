@@ -344,7 +344,7 @@ instead of redefining it.
   way it already did for `pGen`. Found via a real mismatch: `pn.case5()` has
   a 170 MW `sgen` at bus 0 that was silently vanishing, throwing off both
   that bus's and the slack bus's injection vs. the
-  `5_BUS_IEEE_bad_data_analytics.ipynb` notebook (which builds `net` directly
+  `2026-06-18_5_BUS_IEEE_bad_data_analytics.ipynb` notebook (which builds `net` directly
   via `pn.case5()`, sgen included). `mv_oberrhein` — a real MV distribution
   case Luis cares about — has 153 sgen buses out of 179 that were **all**
   silently dropped before this fix.
@@ -361,7 +361,7 @@ instead of redefining it.
     Initially only the line's "from" terminal was measured (rationale: in
     lossless DC, `P_j->i = -P_i->j` exactly at the true value, so the "to"
     side looked like duplicate information). Reverted after comparing
-    against `notebooks/simulacao/5_BUS_IEEE_bad_data_analytics.ipynb`
+    against `notebooks/simulacao/2026-06-18_5_BUS_IEEE_bad_data_analytics.ipynb`
     (case5, SCADA everywhere): the notebook's `m` was 17, the app's was 11
     — a real DOF mismatch (13 vs 7), not just noise. Each line terminal has
     its own physical RTU/CT-TP with its own independent measurement error —
@@ -570,7 +570,7 @@ Estado rastreado em `closedSwitchMap: Map<switchId, { lineId, sw }>` no
   regra é "confiável × não confiável", não "aberto × fechado": 0 e 1 são os dois
   estados coerentes e ganham cores calmas; 2 e 3 são os ambíguos e ganham
   alerta. A mesma escala está na figura do CSI
-  ([diag_cadeia_scada.html](../../docs/CSI/slides_2026/figuras/diag_cadeia_scada.html)),
+  ([diag_cadeia_scada.html](../../eventos/2026_csi_1a/slides_2026/figuras/diag_cadeia_scada.html)),
   de propósito — slide e app precisam ser lidos como a mesma coisa.
 - **Qualidade de ponto** segue o mesmo mapa: `good/suspect/bad` →
   `status-good/status-warn/destructive`.
@@ -1123,7 +1123,246 @@ pu" e ver onde elas estão, nem atribuir medidor a um grupo delas de uma vez.
 
 ### Próximas etapas (plano)
 
-Painel de camadas com estilo por atributo → aba Mapa (MapLibre, carregada sob
-demanda, só com lon/lat válidos; sem internet mostra só as geometrias) →
-edição no mapa/diagrama com desfazer e arquivo de projeto.
+Painel de camadas com estilo por atributo (resultado como camada colorida:
+tensão, carregamento, erro do estimador) → edição no diagrama com desfazer e
+arquivo de projeto → camada de OPF (restrições ativas, despacho).
+
+## 2026-09-30 — Vista One-line (unifilar com rede malhada) e correção do zoom no Spatial
+
+### Por que
+
+Spatial (anéis por saltos) e Tree (árvore geradora) não são convenções de
+quem trabalha com fluxo de potência/OPF, e a Tree joga as ligações que fecham
+laços como tracejados que cruzam tudo — ruim em rede malhada. O padrão da área
+é o **diagrama unifilar**: barra como barra grossa, gerador/carga/medidor como
+símbolos, ligações em ângulo reto, cor por nível de tensão.
+
+### O que mudou
+
+- **`OneLineView.tsx` + `lib/oneLineLayout.ts`** (novos): quarto botão do
+  seletor de vista (*One-line*). Layout em camadas com roteamento ortogonal via
+  **ELK** (`elkjs`), rodando num Web Worker (não trava a UI); slack fixada na
+  primeira camada; barra com largura proporcional ao grau; gerador (G, `~` para
+  slack), seta de carga, DG, badge de medidor, chave aberta tracejada com
+  glifo; cor por nível de tensão (`nominal_voltage_kv`) com legenda; com
+  resultado de PF, barra colorida por tensão + `V pu` e espessura da linha por
+  fluxo. Seleção compartilhada e clique abrem o popover de medidor como nas
+  outras vistas. Funciona em malha (testado com IEEE 14 e com um alimentador
+  real de 336 barras, 20 kV + 0,4 kV). Carregado sob demanda (chunk de 14 kB;
+  o worker de 1,6 MB só baixa ao abrir a vista). Acima de 800 barras pede
+  confirmação ("Lay out anyway") — um unifilar de milhares de barras é ilegível
+  em qualquer ferramenta; use Map/Tree.
+- **Zoom do Spatial (SVG)**: (1) cada barra desenhava **dois** badges de
+  medidor e um deles não era contra-escalado (chegava a ~240 px); (2) rótulos
+  "L…" cresciam com o zoom; agora têm tamanho constante na tela; (3) o expoente
+  da escala semântica passou de 0,75 para 0,9; (4) o destaque de seleção não usa
+  mais `drop-shadow` (filtro SVG escala com o zoom).
+
+### Limites conhecidos (v1)
+
+Layout automático de malha densa sempre deixa alguns cruzamentos. Posições
+ainda não são editáveis nem persistidas nesta vista (próxima etapa: arrastar,
+grade e salvar junto com o caso).
+
+## 2026-09-30 (2) — Painel *Properties* (identify) e cores da One-line
+
+- **`ElementInspector.tsx`** (novo): clicar numa barra ou linha — em qualquer
+  vista (One-line, Spatial, Tree, Map) ou na tabela — abre o dock lateral na
+  aba *Properties* (o dock agora tem abas *Properties* | *Table*, botão
+  *Details*). Mostra **todos** os atributos em **pu**, com MW/MVAr/Ω ao lado
+  quando a base é conhecida (`meta.sn_mva`, das importações pandapower): tensão
+  nominal, setpoint/estimativa de V, ângulo, cargas, geração, DG, injeção
+  líquida, limites de Q, linhas conectadas (clicáveis), coordenadas; para
+  linha: de/para (clicáveis), R/X/B em pu (e Ω), X/R, tap, estado da chave;
+  com resultado de PF, também a solução. O seletor de medidor mora aí, então
+  **quando o painel existe o clique não abre mais o popover de medidor** (o
+  popover continua onde não há painel, ex.: Console). Seleção múltipla mostra
+  totais em vez de detalhe.
+- **Cores da One-line**: a barra é colorida pelo **nível de tensão nominal**
+  (vermelho = o mais alto, depois azul, verde…; legenda "Voltage level").
+  Cinza = nível desconhecido (rede sem `nominal_voltage_kv`, ex.: importada de
+  CSV). Preto = rede de um nível só. Com resultado de PF a cor passa a ser a
+  faixa de tensão (azul < mín., verde dentro, vermelho > máx.), com legenda.
+
+
+## 2026-09-30 — Galeria de componentes (`galeria.html`)
+
+### Por que
+
+Luis queria uma vitrine com telas, componentes e tokens. Um Figma mantido à mão
+viraria segunda fonte da verdade, e o Storybook seria dependência grande demais
+para o tamanho do projeto. Plano completo em
+[plano_galeria.md](../../docs/galeria/plano_galeria.md).
+
+### O que mudou
+
+- `galeria.html` + `src/galeria/` formam uma segunda entrada do Vite. Em dev:
+  `npm run dev` e abrir `http://localhost:5173/galeria.html`.
+- Seção **Tokens**: lê as variáveis dos blocos `:root` do `index.css` direto
+  das folhas de estilo carregadas (cores com amostra, `--radius`), mais raios,
+  escala tipográfica e espaçamento do Tailwind.
+- Seções **Primitivos** (botões em variantes × tamanhos, badges, formulário,
+  tabs, tooltip, dialog), **Componentes do app** (`TableCard` em 3 estados,
+  `MatrixViewer` com a matriz B do caso de 5 barras, `StepFlowchart`, `Math`) e
+  **Diagrama de rede** (`TopologyDiagram` sem e com resultado ilustrativo).
+  Dados de exemplo em `src/galeria/exemplos.ts`.
+- `npm run build:galeria` gera `dist-galeria/galeria.html`, um arquivo só que
+  abre com duplo clique. Tem que ser um arquivo só porque o Chrome recusa
+  `<script type="module" src>` em `file://`: `vite build --mode galeria`
+  (bloco `mode === 'galeria'` no `vite.config.ts`) embute assets como data URI
+  num chunk único, e `scripts/inline-galeria.mjs` cola JS e CSS no HTML.
+- Fora do instalador: `npm run build` só compila `index.html` e nada do app
+  importa `src/galeria/` (verificado: zero referências no bundle do app).
+
+### Regras que ficam
+
+- Componente compartilhado novo entra na galeria na mesma tarefa em que é
+  criado (nova seção em `src/galeria/secoes/` + linha em `SECOES` no
+  `Galeria.tsx`).
+- A galeria nunca chama o backend: dados de exemplo fixos e tipados.
+- Token novo em `:root` aparece sozinho; não precisa editar a galeria.
+
+## 2026-10-03 — Engineering software interaction and temporal UI proposals
+
+### Confirmed design requirement
+
+Luis reaffirmed that the Workbench must feel like professional engineering
+software for editing, simulating and inspecting a network. New screens and
+temporal capabilities must extend the existing design system and working
+environment, preserving its compact density, component language and English UI.
+
+### Rules for implementation
+
+- Reuse the existing shadcn/ui primitives, semantic tokens from
+  [index.css](app/frontend/src/index.css), and the shared
+  [TableCard](app/frontend/src/components/TableCard.tsx) for tables.
+  Validate new shared components in the
+  [component gallery](app/frontend/galeria.html), which uses the real components.
+- Organize working views around the network canvas, compact toolbars,
+  resizable inspectors, tables and charts. Keep commands and the current
+  selection close to the object being edited or inspected.
+- Preserve pan/zoom, element selection and working context during result
+  updates and navigation. Temporal views must identify the scenario,
+  execution and selected instant consistently.
+- Use motion to communicate computed changes in flow direction, loading or
+  status. Preserve legible units, legends and the distinction between physical
+  truth, telemetry and estimation; provide pause and reduced-motion behavior.
+- Favor usable workspace area, direct manipulation and data inspection over
+  oversized presentation sections, decorative cards or marketing content.
+
+### Scope of the current proposal
+
+The [temporal interface concept](docs/assets/exportados/workbench-temporal-conceito.html)
+explores a shared time cursor and a Console cockpit with illustrative data.
+It is an interaction sketch, not a component or styling source of truth.
+The final tab organization and temporal engine remain proposals; this entry
+records the confirmed design requirement without claiming implementation.
+
+### Concept revision requested by Luis
+
+The HTML concept was rebuilt on the same day with the actual shared Button,
+Tabs, TableCard and Resizable primitives. Its light appearance reads the
+existing theme from [index.css](app/frontend/src/index.css); the standalone
+preview namespaces those tokens and adapts them for dark appearance.
+The workspace now has an object explorer, a one-line canvas with pan/zoom and
+selection, an attribute inspector, a results dock and a shared replay timeline.
+This makes editing and inspecting the network the primary interaction.
+
+The [concept source](work/visualizations/temporal-concept.tsx) and
+[build command](work/visualizations/build-temporal-concept.mjs) reproduce the
+single-file preview using installed frontend dependencies. The waveform and
+attack response remain illustrative; the revision does not integrate an
+electrical solver or settle the app's final temporal architecture.
+
+## 2026-10-04 — Temporal engineering workspace implemented
+
+Luis authorized applying the concept to the app. **Snapshot / Time series**
+is now a global mode switch. Console, Topology, Power Flow, State Est. and
+Bad Data share one mounted
+[TemporalWorkbench](app/frontend/src/components/TemporalWorkbench.tsx), one
+computed run, selected equipment and time cursor. Each view opens an
+appropriate results lens; navigation preserves the diagram instance and zoom.
+Other tools retain snapshot semantics and show a context notice.
+
+- The workspace uses the real Button, Select, Input, Checkbox, Tabs,
+  Resizable and [TableCard](app/frontend/src/components/TableCard.tsx)
+  components, semantic colors, compact density and English labels. Explorer,
+  canvas/results dock and inspector are resizable; narrow viewports stack the
+  panels vertically. The app navigation wraps within its available width,
+  fixing the horizontal overflow observed at 736 px during verification.
+  [Slider](app/frontend/src/components/ui/slider.tsx) accepts optional thumb
+  labels and value text, so the replay cursor announces simulation time and
+  supports keyboard navigation without changing other slider callers.
+- [OneLineView](app/frontend/src/components/OneLineView.tsx) receives actual
+  AC results. Optional signed-flow arrows and moving dashes reuse its existing
+  routed geometry; result updates do not trigger layout. Motion runs only
+  during replay and respects `prefers-reduced-motion`. Snapshot callers keep
+  their previous behavior through optional props with disabled defaults.
+- [TemporalPlayback](app/frontend/src/components/TemporalPlayback.tsx) selects
+  discrete computed frames, stops at the horizon and never interpolates
+  electrical values. It is also demonstrated with typed illustrative times in
+  the [gallery section](app/frontend/src/galeria/secoes/Temporal.tsx).
+- Charts distinguish truth, observed values, WLS and EKF, with 95% covariance
+  intervals. Injection labels are known simulation truth, separate from
+  innovation and chi-square diagnostics. Units and model assumptions remain
+  visible; the reference topic is in
+  [helpContent.ts](app/frontend/src/lib/helpContent.ts).
+- Draft settings do not relabel computed results. Edits show a previous-run
+  banner; network edits retain the original run topology until recalculation.
+  Export uses that immutable computed run. Save/load uses the existing local
+  scenario storage for inputs and requires a fresh calculation.
+- The workspace and renderer load on demand through React lazy/Suspense,
+  keeping the temporal renderer out of the initial snapshot bundle.
+
+Numerical scope, defaults and limitations are documented in
+[Workbench temporal](temas/workbench_app/workbench_temporal.md). Verification uses
+[browser checks](scripts/verificar_workbench_temporal.py) with real backend
+calculations, and the
+[canonical capture command](scripts/capturar_screenshots_app.py) now supports
+`--temporal-only`.
+
+## 2026-10-06 — Bad Data: tela branca quando o limiar χ² vem nulo
+
+Achado ao gravar os clipes do motion de lançamento
+([gravar_clipes_motion.py](scripts/gravar_clipes_motion.py)): qualquer
+detecção seguida de remoção na rede de 5 barras derrubava a aba Bad Data
+inteira (`Cannot read properties of null (reading 'toFixed')`). A remoção
+leva o DoF a 0, o χ² fica sem limiar (`NaN` no Python, `null` no JSON), mas o
+tipo em `api.ts` dizia `number`.
+
+- `pipeline.threshold` e `history[].J/threshold` agora são `number | null`
+  em `api.ts`; o TypeScript passou a apontar cada uso inseguro.
+- Exibição: `—` no lugar do número (tabela de iterações, explicação de
+  convergência, Workbench).
+- Comparação `J > threshold` usa `threshold ?? Infinity`: em JS `J > null`
+  vale `true`, e o J ficaria vermelho sem haver limiar a exceder.
+
+## 2026-11-03 — Bad Data: GLRT + t̂ e a etapa offline
+
+- **Identificação "GLRT + t̂ (AC)"** na aba Bad Data. Com ela o seletor
+  "Correction" fica desabilitado: a correção segue o veredito de cada
+  iteração (medida → CNE, parâmetro → (1 + t̂), topologia → abrir/fechar).
+  O card **Step 3a1b** mostra uma linha por iteração: J, limiar, veredito,
+  elemento, t̂ com IC95 e a correção, num `TableCard` como os demais.
+- **Card "Offline stage of the GLRT"** (`OfflineStageCard.tsx`): botão sob
+  demanda (a biblioteca custa 3 fluxos de potência por linha), que mostra a
+  mesma figura do notebook do laço e do guia (§7.1) num `iframe srcDoc` com
+  `sandbox="allow-scripts"`. Por que iframe: a figura é HTML+JS autocontido
+  gerado no backend (`figura_offline.py`), uma fonte só para notebook, guia
+  e app; reescrevê-la em React duplicaria o desenho. O frontend manda o
+  layout que já calcula (`computeOneLineLayout`), então o unifilar da figura
+  é o mesmo da aba Topology.
+- **`getElk()` saiu de `OneLineView.tsx` para `lib/elk.ts`**: um único ELK
+  com Web Worker, compartilhado pela vista unifilar e pela figura offline.
+- Piso de σ padrão da aba passou a 0,005 pu (era 0,001), o mesmo dos
+  notebooks (`docs/governanca/regra_sigma_min.md`).
+- Inspetor de barra mostra **Q shunt** quando a barra tem banco de
+  capacitor/reator (`qShunt`, novo na topologia junto com o `tapRatio` que o
+  backend passou a respeitar; BUG-011).
+- **Ataque de parâmetro com dois modelos** (seletor "Parameter error model",
+  aba Bad Data): "r, x, c × factor" (comprimento errado, Bretas 2017, o de
+  sempre: slider de n·σ_param e a caixa "symmetric") ou "g, b, b_sh — admittance"
+  (três campos t, campo = modelo·(1 + t), o erro no campo e a topologia como
+  modelo, igual ao notebook do laço). A caixa "symmetric" só aparece no
+  primeiro modo; o alerta do ataque mostra os t no segundo.
 

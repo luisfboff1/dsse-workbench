@@ -152,7 +152,8 @@ export const HELP_CATEGORIES: HelpCategory[] = [
         description: [
           'The AC Ybus layer computes the full set of AC measurements — bus voltage magnitudes, active/reactive bus injections, and active/reactive branch flows — directly from the complex admittance matrix Y_bus and the complex voltage vector V = |V|∠θ.',
           'This is the h(x) function used by the Gauss-Newton WLS solver when running in AC mode. Two versions exist: v0 computes element-by-element, while v1 uses vectorised Ybus operations for speed.',
-          'The Jacobian H = ∂h/∂x is computed analytically from the partial derivatives of the AC power equations with respect to bus angles θ and magnitudes |V|.',
+          'The Jacobian H = ∂h/∂x is computed analytically from the partial derivatives of the AC power equations with respect to bus angles θ and magnitudes |V| (the polar dS/dV formulas used by MATPOWER), and stored as a sparse matrix: each row only touches the buses next to the meter, so H and the gain matrix G = HᵀWH stay small even for networks with thousands of buses.',
+          'Central finite differences remain as the reference and as a fallback: any measurement type without a hand-written derivative is differentiated numerically, row by row, so adding a new sensor type only requires its h(x). A regression test checks that both Jacobians agree.',
         ],
         equations: [
           { label: 'Complex current injection', latex: '\\mathbf{I} = \\mathbf{Y}_{\\text{bus}}\\,\\mathbf{V}' },
@@ -172,7 +173,8 @@ export const HELP_CATEGORIES: HelpCategory[] = [
         paradigm: 'dynamic',
         description: [
           'The dynamic estimator propagates the previous state and covariance before assimilating the next measurement snapshot. The linear KF uses a fixed H matrix; the EKF evaluates the nonlinear AC measurement function h(x) and its Jacobian at the predicted state.',
-          'Process noise Q must be calibrated from a historical period that ends before the evaluated trajectory. Calibrating Q from x_true in the test period leaks ground truth and invalidates causal validation.',
+          'The app Time series mode now connects the existing EKF to offline AC QSTS. It uses F = I and manually configured angle/voltage process-noise rates. Frame zero initializes both state and covariance from measured WLS and is not assimilated twice. All later WLS and EKF updates receive the same noisy, possibly attacked observations.',
+          'Process noise Q can be configured manually. When calibrated, its historical period must end before the evaluated trajectory. Calibrating Q from x_true in the test period leaks ground truth and invalidates causal validation.',
           'The optional Chapter 8 adaptation monitors normalized innovations. A strongly skewed innovation vector is treated as a gross-measurement-error candidate; otherwise the method reports a state change and can restart from a static WLS solution. Thresholds must be calibrated for the measurement count and sensor mix.',
         ],
         equations: [
@@ -182,7 +184,7 @@ export const HELP_CATEGORIES: HelpCategory[] = [
           { label: 'Kalman correction', latex: '\\hat{\\mathbf{x}}_{k|k}=\\hat{\\mathbf{x}}_{k|k-1}+\\mathbf{K}_k\\boldsymbol{\\nu}_k' },
         ],
         steps: [
-          'Calibrate Q from a separate historical trajectory',
+          'Set Q manually or calibrate from a separate historical trajectory',
           'Predict state and covariance with F and Q',
           'Compute h(x), H(x), innovation and innovation covariance S',
           'Optionally classify anomaly as gross error or state change',
@@ -444,6 +446,7 @@ export const HELP_CATEGORIES: HelpCategory[] = [
               { id: 'measurement', name: 'Measurement (z)', description: 'One z shifted by k×σ — classic gross error, all pipelines above apply.' },
               { id: 'parameter', name: 'Line parameter (H)', description: "r/x/c of one line wrong in the estimator's model; measurements stay clean. AC only." },
               { id: 'both', name: 'Both at once', description: "Arturo's ambiguity check — several shifted measurements can mimic a parameter error." },
+              { id: 'topology', name: 'Topology (switch status)', description: "A switch in the field is not in the state the model says. 'Tie switch closed in the field' (the distribution case): the switch between two chosen buses is kept in the model as open, so GLRT + t̂ can name it; correction closes it in the model. 'Line open in the field' islands a radial feeder and is refused there. Measurements come from the field. AC only (12/11/2026)." },
             ],
           },
           {
@@ -498,7 +501,7 @@ export const HELP_CATEGORIES: HelpCategory[] = [
         tagline: 'Deciding WHICH of the three things is wrong — the fixed threshold, where it fails, and the learned replacement.',
         paradigm: 'static',
         description: [
-          'Three different things can be wrong, and each needs a different fix: the measurement z (remove or correct via CNE), the model H (correct r/x/c via eq. 16), or the switch status (topology — correction not implemented yet). Choosing the wrong one is worse than doing nothing: correcting a measurement when the real fault is a parameter leaves the parameter database wrong for every future snapshot, and the pipeline can drive J below the χ² threshold while never fixing the actual cause.',
+          'Three different things can be wrong, and each needs a different fix: the measurement z (remove or correct via CNE), the model H (correct r/x/c via eq. 16), or the switch status (topology — open the line and drop its flow meters, or close a line that is out of the model). Choosing the wrong one is worse than doing nothing: correcting a measurement when the real fault is a parameter leaves the parameter database wrong for every future snapshot, and the pipeline can drive J below the χ² threshold while never fixing the actual cause.',
           'The classical rule (classify_attack_signature) decides with ONE fixed threshold on ONE scalar: line_fraction_threshold = 0.5 applied to the fraction of the winning line\'s own measurements above |CME_N| > 3. If that fraction is below the threshold the verdict is "measurement" (an isolated spike); if it is above and the line has flow measurements in the set, "parameter"; if it is above but the line has NO flow measurements, "topology" (the flows vanished because the estimator does not know the line exists).',
           'A ground-truth sweep over the four factors — attacked line, error magnitude, noise level and number of attacked measurements — measures where that rule breaks. On the IEEE 5-bus (6150 scenarios) the overall type accuracy is ≈0.51. The failure is not evenly spread: false alarm on clean data is low (≈3%, close to the nominal α = 0.05), but the "parameter" class is recovered only ≈27% of the time and "topology" ≈24%, with most topology cases mislabelled as "parameter".',
           'Two distinct causes. (1) DETECTION, not classification: a parameter error of only a few percent on a lightly loaded line does not push the χ² test over the threshold at all, so the pipeline never reaches the classifier. (2) SIGNATURE COLLISION: an attacker who shifts several measurements at once produces the same spread-out pattern as a single parameter error. That collision is monotone in the number of attacked measurements — with 1 attacked measurement ≈16% are mislabelled "parameter", with 4 it reaches ≈69% when the attacker picks measurements from one line\'s own set, versus ≈42% for measurements picked at random.',
@@ -508,10 +511,12 @@ export const HELP_CATEGORIES: HelpCategory[] = [
           'The features do NOT transfer between networks, despite being dimensionless: training on the 5-bus and testing on the 14-bus gives 0.581 with the "none" recall collapsing to zero (a 100% false-alarm rate hidden behind a plausible-looking global accuracy), and the reverse direction gives 0.088 — worse than the threshold baseline. Train per network. When training on the target network is not possible, use the training-free stack instead: matched filter to rank lines, then physical verification of the top candidates.',
           'Matched filter: correlate the SHAPE of the observed −r_N against a per-line sensitivity signature ∂h/∂p precomputed once, offline, at a typical planning operating point (a flat start does not work). It needs no training and doubles line-identification accuracy: 0.35 → 0.64 on the 5-bus and 0.21 → 0.60 on the 14-bus, and it barely degrades with noise. Physical verification on top — apply eq. 16 to each of the top k candidates, re-solve the WLS, keep the lowest J — adds a further 0.64 → 0.83 on the 5-bus but only 0.60 → 0.65 on the 14-bus. Keep k small: exhaustive search over every line makes it WORSE in both networks (0.83 → 0.67 and 0.60 → 0.48), because J alone does not break the tie without the matched-filter prior restricting the search.',
           'The single most useful new feature is physical, not statistical: a parameter error on a line perturbs h(x) of that line\'s FLOWS and of its terminal injections together, whereas a measurement attack on the injection of a degree-2 bus flags exactly half of the line\'s own measurements while touching no flow at all — landing precisely on the 0.5 threshold. Separating "fraction of own BRANCH measurements flagged" from "fraction of own INJECTION measurements flagged" turns that ambiguity from a caveat into a discriminator.',
+          'What run_general_bad_data_pipeline uses now (12/10/2026, classifier="glrt", default; "p213" keeps the fixed-threshold rule): classify_by_glrt, a training-free model selection between subspaces. Level 0: the largest |r_N| (a k = 1 subspace) competes with every line on the same ΔJ/k scale — measurement vs. line. Level 1: argmax_ℓ ΔJ_ℓ/k_ℓ picks the line. Level 2, the combined rule: a line that is out of service in the model ⇒ topology (it closed); a line in service ⇒ t̂ = c/(1 − c δ_ℓ), with δ_ℓ = PTDF_ℓℓ, undoes the 1/(1 + t δ) amplification and returns the actual fractional change. If its 95% CI contains −1 ⇒ topology (line opened); if it lies inside (−0.9, 0.9) ⇒ parameter; otherwise "inconclusive": the pipeline corrects nothing and stops with that state recorded. This is what stops a large (−70%) parameter error from being called topology. Corrections (03/11/2026): measurement ⇒ z ← z − CNE·σ; parameter ⇒ (g, b, b_sh) ← (1 + t̂)·(g, b, b_sh), the size level 2 already estimated (parameter_correction="t_hat", default; "eq16" keeps Bretas 2017 eq. 16 — on the IEEE 14 at −70% the t̂ correction brings J below the threshold in 87% of the runs against 20% for eq. 16); topology ⇒ open the line (and drop its flow meters) or close it, then rebuild the library S_ℓ and δ_ℓ for the new model. In the app: Bad Data tab, AC model, Identification = "GLRT + t̂"; the "Offline stage" card draws S_ℓ, M = (I−K)S_ℓ and δ_ℓ on the one-line diagram. To validate t̂, use the parameter error model "g, b, b_sh — admittance": the topology is the operator model and the field is model·(1 + t), so t̂ estimates that same t (the "r, x, c × factor" model scales g and b by 1/factor but b_sh by the factor, in opposite directions, so t̂ does not measure the factor).',
           'Operationally the learned model returns a probability distribution over the four types instead of a hard label. That is what removes the subjectivity: instead of a hand-picked line_fraction_threshold, the operator picks a confidence level, and below it the agent ABSTAINS rather than guessing — the "go and get more evidence" behaviour, not "apply the wrong correction and diverge".',
         ],
         equations: [
           { label: 'Baseline decision rule (what is being replaced)', latex: '\\text{tipo} = \\begin{cases} \\text{measurement}, & f^\\star < \\tau \\\\ \\text{topology}, & f^\\star \\geq \\tau \\;\\wedge\\; \\text{sem fluxo} \\\\ \\text{parameter}, & \\text{caso contrário} \\end{cases}' },
+          { label: 'GLRT level 2: combined rule (t-hat)', latex: '\\hat t = \\dfrac{c}{1 - c\\,\\delta_\\ell},\\quad \\delta_\\ell = \\mathrm{PTDF}_{\\ell\\ell},\\qquad -1 \\in \\mathrm{IC}_{95}(\\hat t) \\Rightarrow \\text{topology};\\; \\mathrm{IC}_{95} \\subset (-0.9, 0.9) \\Rightarrow \\text{parameter};\\; \\text{else inconclusive}' },
           { label: 'The scalar it thresholds', latex: 'f^\\star = \\max_{\\ell} \\dfrac{|\\{i \\in \\operatorname{own}(\\ell) : |\\operatorname{CME}_{N,i}| > 3\\}|}{|\\operatorname{own}(\\ell)|}' },
           { label: 'Concentration of the signature (IPR — isolated spike vs. spread hump)', latex: '\\operatorname{IPR} = \\sum_{i=1}^{m} p_i^2, \\qquad p_i = \\dfrac{\\operatorname{CME}_{N,i}^2}{\\sum_j \\operatorname{CME}_{N,j}^2}' },
           { label: 'Normalised entropy of the signature', latex: 'S = -\\dfrac{1}{\\ln m}\\sum_{i=1}^{m} p_i \\ln p_i' },
@@ -549,6 +554,9 @@ export const HELP_CATEGORIES: HelpCategory[] = [
         ],
         relatedFunctions: [
           'ac_bad_data.classify_attack_signature()',
+          'ac_bad_data.run_general_bad_data_pipeline()',
+          'signature_sweep.classify_by_glrt()',
+          'signature_sweep.branch_delta()',
           'signature_sweep.signature_features()',
           'signature_sweep.run_sweep()',
           'signature_sweep.inject_measurement_attack()',
@@ -891,13 +899,15 @@ export const HELP_CATEGORIES: HelpCategory[] = [
           'Every measurement z in the app is the sum of the true (noise-free) value z_true and a Gaussian noise sample ε. The true value comes from running a reference power flow (Stage C1 of the synthetic pipeline); the noise is injected in Stage C2.',
           'The standard deviation σᵢ is assigned per sensor class and per measurement type. It encodes how accurate the sensor is — a smaller σ means a more reliable measurement. The weight matrix W = R⁻¹ (inverse measurement covariance) tells the WLS estimator how much to trust each measurement: high weight = small σ = reliable.',
           'The covariance matrix R is diagonal under the standard assumption that sensor errors are independent. If off-diagonal correlations exist (e.g., multiple readings from the same PMU), R must be the full covariance — the WLS normal equations are unaffected in form but G = HᵀWH uses the full R⁻¹.',
-          'Sigma reference values by sensor class: PMU ≈ 0.001 pu (0.1%), SCADA ≈ 0.02 pu (2%), AMI ≈ 0.03 pu (3%), Smart Meter ≈ 0.05 pu (5%). These are relative to the system base (1 pu voltage, Sbase MW).',
+          'Sigma reference values by sensor class: PMU ≈ 0.001 pu (0.1%), SCADA ≈ 0.02 pu (2%), AMI ≈ 0.03 pu (3%), Smart Meter ≈ 0.05 pu (5%). These are relative values; for P and Q a second, constant term applies (see below).',
+          'Noise floor (σ_min). A real power meter has two error terms: one proportional to the reading and one constant, a share of the meter\'s own full scale (its accuracy class). The app takes the full scale of each meter from the operating point it measures: twice the apparent power |S| at that branch end or bus. On a bus with no load, the injection meter sees what crosses the bus, so its full scale is the largest |S| on the branches connected to it. σ_min (default 0.005 = 0.5%) is that share. The floor never depends on the network base (Sbase): the same network solved with Sbase = 1, 10 or 100 MVA gets the same σ. Since 11/11/2026 the app also audits every measurement set and warns when the floor, instead of the meter class, dominates the relevant readings.',
         ],
         equations: [
           { label: 'True measurement (ground truth)', latex: 'z_i^{\\text{true}} = h_i(\\mathbf{x}^{\\text{true}})' },
           { label: 'Observed measurement with noise', latex: 'z_i = z_i^{\\text{true}} + \\varepsilon_i, \\quad \\varepsilon_i \\sim \\mathcal{N}(0,\\,\\sigma_i^2)' },
           { label: 'Measurement covariance (diagonal)', latex: '\\mathbf{R} = \\operatorname{diag}(\\sigma_1^2,\\,\\sigma_2^2,\\,\\ldots,\\,\\sigma_m^2)' },
           { label: 'Weight matrix', latex: '\\mathbf{W} = \\mathbf{R}^{-1} = \\operatorname{diag}(1/\\sigma_1^2,\\,\\ldots,\\,1/\\sigma_m^2)' },
+          { label: 'P/Q noise with floor (per meter)', latex: '\\sigma_i = \\max\\big(\\sigma_{\\min}\\,\\mathrm{FS}_i,\\ |z_i|\\,\\eta\\,k_{\\text{class}}\\big),\\quad \\mathrm{FS}_i = \\max\\big(2|S_i|,\\ S_{\\text{through}},\\ 0.1\\,S_{\\text{typ}}\\big)' },
           { label: 'Bad measurement model (additive gross error)', latex: 'z_k^{\\text{bad}} = z_k^{\\text{true}} + \\varepsilon_k + b_k, \\quad |b_k| \\gg 3\\sigma_k' },
         ],
         glossary: [
@@ -907,12 +917,17 @@ export const HELP_CATEGORIES: HelpCategory[] = [
           { term: 'σ (sigma)', definition: 'Standard deviation of the measurement noise for sensor i. Determines trust (weight): w_i = 1/σ_i².' },
           { term: 'R', definition: 'Measurement error covariance matrix, diagonal: R = diag(σ₁², …, σₘ²). Off-diagonal elements = 0 under independence.' },
           { term: 'W = R⁻¹', definition: 'Weight matrix. Diagonal elements wᵢ = 1/σᵢ². Larger weight → estimator trusts that measurement more.' },
+          { term: 'Full scale (FS)', definition: 'Range of a meter: 2×|S| at the point it measures (branch end or bus); for a bus without load, the largest |S| on its branches. The σ floor is σ_min × FS.' },
           { term: 'b (gross error)', definition: 'Large additive error |b| ≫ 3σ injected into one measurement to simulate a bad measurement (meter fault, communication error, cyber attack).' },
         ],
         relatedFunctions: [
           'measurement_layer.apply_measurement_layer()',
           'measurement.SensorSpec',
           'batch_powerflow.run_batch_powerflow()',
+          'sensor_calibration.p_sigma()',
+          'sensor_calibration.meter_full_scale()',
+          'sensor_calibration.audit_power_sigmas()',
+          'ac_measurements.bus_throughput()',
         ],
       },
     ],
@@ -973,6 +988,28 @@ export const HELP_CATEGORIES: HelpCategory[] = [
     icon: 'Atom',
     topics: [
       {
+        id: 'temporal-workbench',
+        title: 'Temporal Workbench — AC QSTS, WLS and EKF',
+        tagline: 'Run reproducible load/DG scenarios, schedule measurement bias and replay calculated frames.',
+        paradigm: 'dynamic',
+        description: [
+          'Choose Time series in the app header. Console, Topology, Power Flow, State Est. and Bad Data share one study, equipment selection, calculated run and time cursor. Their initial result lenses differ; switching tabs preserves the single-line diagram and zoom. Other tools retain their snapshot semantics.',
+          'Choose a constant operating point, a synthetic daily load cycle, or daily load plus solar scaling of existing distributed generation. Scales multiply the imported baseline P/Q loads and fixed-PQ DG; controlled PV generators retain their setpoints. The solar profile creates no new PV plant. An optional local load step modifies one bus during a [start, end) window.',
+          'Run study performs balanced AC power flow at every requested time, generates measurements from the configured bus/branch sensor classes and compares AC Gauss-Newton WLS with random-walk EKF. Sensor uncertainties are recomputed per frame and used consistently for sampling, WLS weights and EKF R. Noise level zero retains the configured sigma floors.',
+          'The first frame uses measured WLS initialization and covariance from its estimated Jacobian. Manual process standard deviations have units rad/√hour and pu/√hour, so Q grows with elapsed simulation hours. No true state is used to initialize or calibrate the estimator. EKF adaptation screens innovation candidates with the existing Chapter 8 skewness heuristic; state changes are reported, without an automatic static restart in this mode.',
+          'A scheduled sensor attack adds bias_sigma × sigma to one scalar channel only while start ≤ t < end. Injection labels are simulation ground truth and are distinct from WLS chi-square alarms and EKF diagnostics. Residual r/σ in the measurement table is a sigma-scaled residual, not the studentized LNR statistic. WLS chi-square is unavailable without positive measurement redundancy.',
+          'Replay advances over precomputed frames and stops at the horizon. Signed physical active power controls arrows; motion runs only during replay and respects reduced motion. Select a bus or branch to inspect values and trends. Shaded 95% intervals use local WLS covariance or EKF posterior covariance; they are model-based intervals and can be misleading under biased or incorrect models.',
+          'Save study stores topology and settings in the existing local scenario library. Load study restores those inputs and requires a fresh calculation. Export run downloads the original run topology, settings, all observations, estimates and events as versioned JSON. Editing settings or topology marks old results as previous-run data.',
+          'This is offline fixed-topology, synchronized QSTS and recursive estimation. It does not implement EMT transients, electromechanical machine dynamics, switching events, live SCADA or multi-rate alignment. Interactive requests are limited to 2–64 buses, 97 frames, 600 scalar measurements and a bus² × frames budget. Unobservable or failed physical trajectories are rejected explicitly.',
+        ],
+        equations: [
+          { label: 'Manual process covariance per elapsed hour', latex: '\\mathbf Q_k=\\Delta t_{k,\\mathrm{h}}\\operatorname{diag}(\\sigma_{\\theta}^2\\mathbf 1_{N-1},\\sigma_V^2\\mathbf 1_N)' },
+          { label: 'Scheduled scalar bias', latex: 'z_{k,i}=h_i(x_k)+\\epsilon_{k,i}+\\mathbf 1_{[t_a,t_b)}(t_k)\\,b\\,\\sigma_{k,i}' },
+        ],
+        steps: ['Configure network and meter placement in Snapshot → Topology', 'Choose Time series; configure horizon, profiles, seed and optional events', 'Run physical AC snapshots and generate configured noisy observations', 'Compute paired WLS/EKF estimates and uncertainty', 'Replay, select equipment, inspect trends/measurements/events', 'Save study settings or export the immutable computed run'],
+        relatedFunctions: ['sistemas_dinamicos.temporal.run_temporal_study()', 'sistemas_dinamicos.run_extended_kalman_filter()', 'app.backend.routes.temporal.run_temporal()'],
+      },
+      {
         id: 'ieee-5-bus',
         title: 'Stagg & El-Abiad 5-Bus Test System',
         tagline: 'The classic small textbook network for algorithm validation.',
@@ -996,12 +1033,12 @@ export const HELP_CATEGORIES: HelpCategory[] = [
         description: [
           'The IEEE 14-bus system represents a portion of the American Electric Power system in 1962. It has 14 buses, 20 branches, 5 generators and 11 load buses. It is the standard benchmark for bad data identification tests.',
           'The higher redundancy and larger state space make it suitable for testing the LNR vs. CME comparison: with 14 buses, there are more potential leverage points and the risk of masked errors is higher.',
-          'The scripts/validar_estimador_ieee14.py script runs the static validation pipeline. The 14_BUS_IEEE_dynamic_AC.ipynb notebook tests the reusable EKF with a separately calibrated Q, injected branch-flow gross errors, a load step and static-WLS restart.',
+          'The scripts/validar_estimador_ieee14.py script runs the static validation pipeline. The 2026-07-17_14_BUS_IEEE_dynamic_AC.ipynb notebook tests the reusable EKF with a separately calibrated Q, injected branch-flow gross errors, a load step and static-WLS restart.',
           'This is currently a structural reproduction rather than an exact numerical replication of Bretas et al. Chapter 8. With 122 measurements, the original fixed thresholds produce false alarms and may briefly classify a real load step as gross data, so Monte Carlo threshold calibration remains necessary.',
         ],
         relatedFunctions: [
           'scripts/validar_estimador_ieee14.py',
-          'notebooks/simulacao/14_BUS_IEEE_dynamic_AC.ipynb',
+          'notebooks/simulacao/2026-07-17_14_BUS_IEEE_dynamic_AC.ipynb',
           'sistemas_dinamicos.run_extended_kalman_filter()',
         ],
       },

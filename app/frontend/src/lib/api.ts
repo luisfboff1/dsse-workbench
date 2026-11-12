@@ -57,6 +57,7 @@ export interface PandapowerCaseInfo {
 }
 
 export interface ScenarioSummary {
+  temporal?: boolean
   id: string
   name: string
   kind: 'topology' | 'powerflow' | 'state_estimation' | 'bad_data' | 'workbench'
@@ -258,8 +259,14 @@ export interface BadDataRequest {
    *  variance, or to reproduce a notebook case exactly. */
   add_noise?: boolean
   /** What gets attacked. 'parameter'/'both' require method='ac' — see
-   *  docs/estudos/estimacao_estado/literatura/bretas2017_malicious_data_innovation.md. */
-  attack_target?: 'measurement' | 'parameter' | 'both'
+   *  temas/revisao_bibliografica/literatura/bretas2017_malicious_data_innovation.md. */
+  attack_target?: 'measurement' | 'parameter' | 'both' | 'topology'
+  /** attack_target='topology': 'open_line' = attack_line_id open in the field, closed in
+   *  the model; 'close_tie' = a tie switch between two buses is open in the model and
+   *  closed in the field (the distribution case). AC only. */
+  attack_topology_mode?: 'open_line' | 'close_tie'
+  attack_tie_from_bus?: number | null
+  attack_tie_to_bus?: number | null
   inject_bad_data?: boolean
   bad_data_index?: number | null
   bad_data_magnitude?: number
@@ -273,11 +280,19 @@ export interface BadDataRequest {
   attack_param_n_sigmas?: number
   /** If true (default), distorts r, x AND c by the same factor; if false, only r and x. */
   attack_param_symmetric?: boolean
+  /** 'rxc': model r/x/c = truth × factor (line length wrong; Bretas 2017) —
+   *  uses sigma_pct/n_sigmas/symmetric. 'admittance': g, b, b_sh each off by
+   *  its own t, field = model·(1 + t) — the loop notebook's convention, the
+   *  variable the GLRT's t̂ estimates. */
+  attack_param_mode?: 'rxc' | 'admittance'
+  attack_param_t_g?: number
+  attack_param_t_b?: number
+  attack_param_t_bsh?: number
   detection?: 'residual' | 'cme'
   /** 'by_line' groups measurements by line (own flow + terminal-bus
    *  injections above threshold) — AC only, matches the parameter-attack
    *  signature described on p. 213 of Bretas et al. 2017. */
-  identification?: 'lnr' | 'cme' | 'by_line'
+  identification?: 'lnr' | 'cme' | 'by_line' | 'glrt'
   /** 'by_parameter' corrects the line's r/x/c via eq. 16 instead of
    *  touching a measurement — AC only, requires identification='by_line'. */
   correction?: 'remove' | 'ztrue' | 'by_parameter'
@@ -296,10 +311,10 @@ export interface BadDataResult {
   chi2_threshold_initial: number  // correct chi2 for the detection method (m-n or m)
   J_initial: number               // residual J (same for all combos with the same injection)
   J_detection_initial: number     // J used by detection (= J_initial for residual, J_CME for cme)
-  K_matrix: number[][]
+  K_matrix: number[][] | null   // null when m > FULL_MATRIX_MAX_M (large networks)
   pipeline: {
     J_final: number
-    threshold: number
+    threshold: number | null
     detected: boolean
     nIterations: number
     nMeasurementsFinal: number
@@ -308,7 +323,23 @@ export interface BadDataResult {
     /** Line id (frontend) flagged at each iteration when identification='by_line'; null for lnr/cme or non-line iterations. AC only. */
     flaggedLines?: (number | null)[]
     actions: string[]
-    history: Array<{ iter: number; J: number; threshold: number; detected: boolean; m: number; flagged_idx?: number; flagged_score?: number; flagged_line?: number | null }>
+    history: Array<{ iter: number; J: number | null; threshold: number | null; detected: boolean; m: number; flagged_idx?: number; flagged_score?: number; flagged_line?: number | null }>
+    /** identification='glrt' only: one row per iteration that acted — the
+     *  GLRT verdict (level 0-2), t̂ with its 95% CI and the correction applied
+     *  ("corrected_measurement", "corrected_parameter_lineN", "opened_lineN",
+     *  "closed_lineN", "inconclusive_lineN_no_correction"). Line ids are pandapower
+     *  indices inside `action`, frontend ids in `lineId`. */
+    glrtSteps?: Array<{
+      iter: number
+      J: number
+      threshold: number
+      type: 'measurement' | 'parameter' | 'topology' | 'inconclusive'
+      lineId: number | null
+      measurementLabel: string | null
+      tHat: number | null
+      tHatCI: (number | null)[] | null
+      action: string
+    }> | null
   }
   measurements: Array<{
     idx: number
@@ -339,8 +370,18 @@ export interface BadDataResult {
     identification: string
     correction: string
     alpha: number
-    attackTarget?: 'measurement' | 'parameter' | 'both'
+    attackTarget?: 'measurement' | 'parameter' | 'both' | 'topology'
   }
+  /** Details of the injected topology error, when attack_target is 'topology'. For
+   *  'close_tie' the tie switch is not in the Topology tab: lineId is a new id. */
+  topologyAttack?: {
+    mode: 'open_line' | 'close_tie'
+    lineId: number
+    fromBus: number
+    toBus: number
+    inTopology: boolean
+    fieldClosed: boolean
+  } | null
   /** Per-line diagnostic ranking (AC only) — fraction of each line's "own"
    *  measurements (flow + terminal-bus injections) above the CME_N
    *  threshold. Always computed when method='ac', regardless of attack
@@ -360,6 +401,9 @@ export interface BadDataResult {
     fromBus: number
     toBus: number
     factor: number
+    mode?: 'rxc' | 'admittance'
+    /** mode='admittance': the t of each admittance term, field = model·(1 + t). */
+    tField?: { g: number; b: number; bsh: number } | null
     trueParams: { r: number; x: number; c: number }
     wrongParams: { r: number; x: number; c: number }
   } | null
@@ -374,6 +418,8 @@ export interface BadDataResult {
     trueParams: { r: number; x: number; c: number }
     /** CNE actually applied by eq. 16 (p_C = p_E·(1+CNE/100)), reconstructed from wrong→corrected r. */
     cneUsed: number | null
+    /** identification='glrt': the line was corrected by p ← (1 + t̂)·p, not eq. 16. */
+    tHat?: number | null
     residualErrorPct: number | null
   } | null
   /** Binary structural incidence matrix (m measurements × n_lines), AC only —
@@ -401,6 +447,19 @@ export interface BadDataResult {
 
 export async function runBadDataDetection(req: BadDataRequest): Promise<BadDataResult> {
   return post('/baddata/detect', { ...req, topology: normalizeTopo(req.topology) })
+}
+
+/** Offline stage of the GLRT (S_ℓ, M = (I−K)S_ℓ, δ_ℓ) as a self-contained HTML
+ *  page for an iframe — the same figure as the loop notebook and the methods
+ *  guide (§7.1). `layout` is the one-line layout the frontend already computes
+ *  (computeOneLineLayout), keyed by frontend bus/line ids. */
+export async function fetchOfflineFigure(req: {
+  topology: Topology
+  noise_level?: number
+  sigma_min?: number
+  layout: { nodes: Record<number, [number, number, number]>; edges: Record<number, [number, number][]> }
+}): Promise<{ html: string }> {
+  return post('/baddata/offline-figure', { ...req, topology: normalizeTopo(req.topology) })
 }
 
 // ─── Bad Data Geometry ───────────────────────────────────────────────────────

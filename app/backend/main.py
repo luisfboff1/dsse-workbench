@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .paths import frontend_dist
-from .routes import agents, baddata, estimation, pipeline, powerflow, scenarios, topology
+from .routes import agents, baddata, estimation, pipeline, powerflow, scenarios, temporal, topology
 
 app = FastAPI(
     title="DSSE Simulation API",
@@ -31,6 +31,7 @@ app.include_router(baddata.router, prefix="/api/baddata", tags=["baddata"])
 app.include_router(scenarios.router, prefix="/api/scenarios", tags=["scenarios"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
+app.include_router(temporal.router, prefix="/api/temporal", tags=["temporal"])
 
 
 @app.get("/api/health")

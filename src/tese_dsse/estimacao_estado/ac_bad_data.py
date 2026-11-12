@@ -1,9 +1,9 @@
 """Pipeline de bad data AC nao-linear + erro de parametro de linha.
 
 Extraido/generalizado a partir de
-``notebooks/simulacao/5_BUS_IEEE_AC_parameter_error_bad_data.ipynb`` (erro de
+``notebooks/simulacao/2026-07-18_5_BUS_IEEE_AC_parameter_error_bad_data.ipynb`` (erro de
 parametro pedido por Arturo, reuniao 2026-07-17 + artigo Bretas et al. 2017,
-``docs/estudos/estimacao_estado/literatura/bretas2017_malicious_data_innovation.md``).
+``temas/revisao_bibliografica/literatura/bretas2017_malicious_data_innovation.md``).
 
 Ao contrario de ``bad_data.run_bad_data_pipeline`` (DC, ``H`` fixo entre
 iteracoes), aqui ``H(x*)`` muda a cada iteracao -- o modelo AC e reconstruido
@@ -148,7 +148,7 @@ def classify_attack_signature(
       fracao de medidas proprias flagradas esta >= `line_fraction_threshold`
       (default 0.5 -- limiar validado empiricamente no 5-bus: 0.625 na
       linha atacada vs. <=0.50 nas demais, ver
-      `docs/estudos/estimacao_estado/literatura/bretas2017_malicious_data_innovation.md`,
+      `temas/revisao_bibliografica/literatura/bretas2017_malicious_data_innovation.md`,
       achado 1).
     - ``"measurement"``: nenhuma linha explica o padrao (fracao da melhor
       linha abaixo do limiar) -- pico isolado numa unica medida.
@@ -195,7 +195,7 @@ def inject_parameter_error(
     incerteza percentual de cadastro de parametro de linha (o artigo so
     define "k sigma" para erro de MEDIDA, eq. 18-19; nao ha um sigma
     equivalente definido para parametro -- ver
-    docs/estudos/estimacao_estado/literatura/bretas2017_malicious_data_innovation.md).
+    temas/revisao_bibliografica/literatura/bretas2017_malicious_data_innovation.md).
 
     Roda `pp.runpp` na rede alterada (necessario para popular o Ybus/branches
     internos que `build_ac_ybus_model_from_pandapower` le) -- o resultado do
@@ -306,24 +306,42 @@ def correct_parameter_eq16_signcheck(
     5-bus), so quando o tipo classificado e `"parameter"`.
 
     Retorna `(net_corrigido, sinal_usado)`, com `sinal_usado` em
-    `{+1.0, -1.0}`.
+    `{+1.0, -1.0}`; `0.0` (e a rede sem mudanca) quando nenhum dos dois
+    candidatos e valido (fator <= 0 ou fluxo nao converge).
     """
 
-    net_plus = correct_parameter_eq16(net, line_id, cne, symmetric=symmetric)
-    net_minus = correct_parameter_eq16(net, line_id, -cne, symmetric=symmetric)
+    from pandapower.auxiliary import LoadflowNotConverged
+
+    def _candidate(c: float) -> Any | None:
+        # eq. 16 so faz sentido com fator > 0; fator <= 0 (impedancia negativa)
+        # ou fluxo que nao converge = candidato invalido, nao erro da rota.
+        # Aparece quando o CNE (em numero de sigmas) passa de 100: o piso de
+        # sigma antigo (11/11/2026) inflava sigma e escondia isso.
+        if 1.0 + c / 100.0 <= 0.0:
+            return None
+        try:
+            return correct_parameter_eq16(net, line_id, c, symmetric=symmetric)
+        except LoadflowNotConverged:
+            return None
+
+    net_plus, net_minus = _candidate(cne), _candidate(-cne)
 
     def _J(net_candidate: Any) -> float:
+        if net_candidate is None:
+            return float("inf")
         model = build_ac_ybus_model_from_pandapower(net_candidate, measurements)
         result = model.solve(x0=model.flat_start(), max_iter=30, tol=1e-8)
-        H = model.jacobian_finite_difference(result.x)
+        H = model.jacobian(result.x, sparse=True)
         r = model.z - model.h(result.x)
         sigma = model.sigma
-        geo = compute_geometric_diagnostics(H, np.diag(1.0 / sigma**2), r, sigma)
+        geo = compute_geometric_diagnostics(H, 1.0 / sigma**2, r, sigma)
         _, J, _ = detect_chi2_cme(geo.CME_N, len(measurements), alpha=alpha)
         return J
 
     J_plus = _J(net_plus)
     J_minus = _J(net_minus)
+    if net_plus is None and net_minus is None:
+        return net, 0.0  # nenhuma correcao valida: mantem o modelo
     return (net_plus, 1.0) if J_plus <= J_minus else (net_minus, -1.0)
 
 
@@ -342,7 +360,7 @@ def rmse_against_truth(
     (usa-lo pra decidir QUAL correcao aplicar seria "cola"); usar so para
     reportar o resultado de um experimento, depois da decisao ja tomada.
     Extraido do `rmse_of` inline de
-    ``notebooks/simulacao/5_BUS_IEEE_AC_parameter_error_bad_data.ipynb``
+    ``notebooks/simulacao/2026-07-18_5_BUS_IEEE_AC_parameter_error_bad_data.ipynb``
     (secao 11/12) -- mesma formula, agora compartilhada com o app
     (`app/backend/routes/baddata.py`).
     """
@@ -370,7 +388,7 @@ class AcBadDataPipelineResult:
     flagged_lines: list[int | None] = field(default_factory=list)
     flagged_types: list[str] = field(default_factory=list)
     """Tipo classificado por iteracao (`"measurement"`/`"parameter"`/
-    `"topology"`) -- so preenchido por `run_general_bad_data_pipeline`;
+    `"topology"`/`"inconclusive"`) -- so preenchido por `run_general_bad_data_pipeline`;
     `run_ac_bad_data_pipeline` deixa vazio (o tipo ja e fixo por `correction=`)."""
     actions: list[str] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
@@ -422,10 +440,10 @@ def run_ac_bad_data_pipeline(
     for iteration in range(max_iter):
         model = build_ac_ybus_model_from_pandapower(net_cur, meas_cur)
         result = model.solve(x0=model.flat_start(), max_iter=max_gn_iter, tol=tol)
-        H_star = model.jacobian_finite_difference(result.x)
+        H_star = model.jacobian(result.x, sparse=True)
         r_cur = model.z - model.h(result.x)
         sigma_cur = model.sigma
-        W_cur = np.diag(1.0 / sigma_cur**2)
+        W_cur = 1.0 / sigma_cur**2  # vetor: diagonal de W
         m_cur, n_cur = H_star.shape
         geo = compute_geometric_diagnostics(H_star, W_cur, r_cur, sigma_cur)
 
@@ -506,13 +524,15 @@ def run_general_bad_data_pipeline(
     alpha: float = 0.05,
     line_threshold: float = 3.0,
     line_fraction_threshold: float = 0.5,
+    classifier: Literal["glrt", "p213"] = "glrt",
+    parameter_correction: Literal["t_hat", "eq16"] = "t_hat",
     max_iter: int = 8,
     max_gn_iter: int = 30,
     tol: float = 1e-8,
 ) -> AcBadDataPipelineResult:
     """Roda deteccao -> classificacao -> correcao iterativamente, decidindo
     o TIPO de ataque (medida/parametro/topologia) a CADA ITERACAO pela
-    assinatura observada (`classify_attack_signature`), em vez de fixar
+    assinatura observada, em vez de fixar
     `identification=`/`correction=` no inicio como `run_ac_bad_data_pipeline`
     faz. E o algoritmo geral de 7 passos do artigo (Bretas et al. 2017,
     secao 3) -- necessario para cenarios com MAIS DE UM TIPO de ataque
@@ -520,20 +540,59 @@ def run_general_bad_data_pipeline(
     mesmo tempo), onde nao da pra saber de antemao qual correcao usar em
     cada iteracao.
 
-    Ataque de topologia e DETECTADO e CLASSIFICADO corretamente, mas a
-    correcao ainda nao esta implementada (`correct_topology` pendente) --
-    se esse tipo for classificado numa iteracao, o pipeline registra a
-    deteccao em `actions`/`history` e PARA (nao tenta corrigir, nao entra
-    em loop infinito).
+    Correcoes, por veredito (03/11/2026, `docs/governanca/decisoes_tecnicas.md`):
+
+    - medida: `z_i <- z_i - CNE_i sigma_i`;
+    - parametro: ``parameter_correction="t_hat"`` (padrao) multiplica g, b e
+      b_sh da linha por ``(1 + t_hat)``, o tamanho que o nivel 2 do GLRT ja
+      estimou (no IEEE 14 volta abaixo do limiar em 87% das rodadas de -70%,
+      contra 20% da eq. 16; notebook
+      `notebooks/bad_data/2026-10-28_laco_bad_data_IEEE14_57.ipynb` secao 6).
+      ``"eq16"`` mantem `correct_parameter_eq16_signcheck` (Bretas 2017). Sem
+      `t_hat` (classificador p213) cai na eq. 16;
+    - topologia: linha em servico no modelo e ABERTA (sai do modelo e os
+      medidores de fluxo dela saem do plano); linha fora de servico e
+      FECHADA. A biblioteca e o `delta` sao refeitos para o modelo novo. Se o
+      fluxo de potencia da rede corrigida nao convergir (ilha), registra
+      ``topology_correction_failed_line{l}`` e PARA.
 
     Usa `detection="cme"` por padrao (nao `"residual"`, ao contrario de
     `run_ac_bad_data_pipeline`) porque e o que o algoritmo geral do artigo
     especifica (chi2 sobre `CME_N`, nao sobre o residuo classico) -- ver
     passo 3 do algoritmo (secao 3 do artigo).
+
+    ``classifier`` (12/10/2026, `docs/governanca/decisoes_tecnicas.md`):
+
+    - ``"glrt"`` (padrao): `signature_sweep.classify_by_glrt` com a regra
+      combinada (`delta=branch_delta(net_model)`, nivel 2 por `t_hat` com
+      IC95). Biblioteca de sensibilidade e `delta` calculados UMA vez, na
+      rede do modelo, antes do laco. A medida-ancora da eq. 16 e a medida
+      propria da linha com maior `|CME_N|`. Pode devolver
+      ``"inconclusive"`` (IC do `t_hat` nem contem -1 nem cabe em
+      (-0,9; 0,9)): nada e corrigido, o estado vai para `actions`/
+      `history` e o laco PARA. `t_hat`/`t_hat_ic` entram no `history`.
+    - ``"p213"``: regra de limiar fixo `classify_attack_signature`
+      (comportamento anterior, para reproduzir notebooks antigos).
     """
 
     if detection not in ("residual", "cme", "cme_satterthwaite"):
         raise ValueError(f"detection invalido: {detection!r}")
+    if classifier not in ("glrt", "p213"):
+        raise ValueError(f"classifier invalido: {classifier!r}")
+    if parameter_correction not in ("t_hat", "eq16"):
+        raise ValueError(f"parameter_correction invalido: {parameter_correction!r}")
+
+    if classifier == "glrt":
+        # import local: signature_sweep importa de ac_bad_data (circular)
+        from .signature_sweep import (
+            branch_delta,
+            classify_by_glrt,
+            line_own_measurement_indices,
+            parameter_sensitivity_library,
+        )
+
+        sens_lib = parameter_sensitivity_library(net_model, measurements)
+        delta = branch_delta(net_model)
 
     net_cur = deepcopy(net_model)
     meas_cur = list(measurements)
@@ -551,10 +610,10 @@ def run_general_bad_data_pipeline(
     for iteration in range(max_iter):
         model = build_ac_ybus_model_from_pandapower(net_cur, meas_cur)
         result = model.solve(x0=model.flat_start(), max_iter=max_gn_iter, tol=tol)
-        H_star = model.jacobian_finite_difference(result.x)
+        H_star = model.jacobian(result.x, sparse=True)
         r_cur = model.z - model.h(result.x)
         sigma_cur = model.sigma
-        W_cur = np.diag(1.0 / sigma_cur**2)
+        W_cur = 1.0 / sigma_cur**2  # vetor: diagonal de W
         m_cur, n_cur = H_star.shape
         geo = compute_geometric_diagnostics(H_star, W_cur, r_cur, sigma_cur)
 
@@ -575,10 +634,23 @@ def run_general_bad_data_pipeline(
             history.append(record)
             break
 
-        attack_type, line_id, idx = classify_attack_signature(
-            meas_cur, net_cur, geo.CME_N,
-            threshold=line_threshold, line_fraction_threshold=line_fraction_threshold,
-        )
+        if classifier == "glrt":
+            H_dense = H_star.toarray() if hasattr(H_star, "toarray") else np.asarray(H_star)
+            attack_type, line_id, diag = classify_by_glrt(
+                sens_lib, H_dense, np.diag(W_cur), r_cur, geo.r_N, delta=delta)
+            idx = int(diag["measurement_idx"])
+            if line_id is not None and attack_type != "measurement":
+                own = line_own_measurement_indices(meas_cur, net_cur, int(line_id))
+                if own:
+                    idx = max(own, key=lambda j: abs(geo.CME_N[j]))
+            if "t_hat" in diag:
+                record["t_hat"] = float(diag["t_hat"])
+                record["t_hat_ic"] = tuple(float(v) for v in diag["t_hat_ic"])
+        else:
+            attack_type, line_id, idx = classify_attack_signature(
+                meas_cur, net_cur, geo.CME_N,
+                threshold=line_threshold, line_fraction_threshold=line_fraction_threshold,
+            )
         score = float(abs(geo.CME_N[idx]))
 
         record["flagged_idx"] = idx
@@ -601,11 +673,33 @@ def run_general_bad_data_pipeline(
             actions.append("corrected_measurement")
         elif attack_type == "parameter":
             assert line_id is not None
-            net_cur, _sign = correct_parameter_eq16_signcheck(net_cur, meas_cur, line_id, float(geo.CNE[idx]), alpha=alpha)
+            if parameter_correction == "t_hat" and "t_hat" in record:
+                t = record["t_hat"]  # p <- (1 + t_hat) p, em g, b e b_sh
+                net_cur, _ = inject_parameter_error_unbalanced(net_cur, line_id, dg_pct=t, db_pct=t, dbsh_pct=t)
+            else:
+                net_cur, _sign = correct_parameter_eq16_signcheck(net_cur, meas_cur, line_id, float(geo.CNE[idx]), alpha=alpha)
             actions.append(f"corrected_parameter_line{line_id}")
-        else:  # topology -- deteccao/classificacao ok, correcao pendente
-            actions.append(f"topology_detected_line{line_id}_correction_not_implemented")
+        elif attack_type == "inconclusive":  # GLRT nao decide: nao corrige nada
+            actions.append(f"inconclusive_line{line_id}_no_correction")
             break
+        else:  # topology: abrir (linha em servico no modelo) ou fechar (fora de servico)
+            import pandapower as pp
+
+            assert line_id is not None
+            fechar = not bool(net_cur.line.at[line_id, "in_service"])
+            net_cur = deepcopy(net_cur)
+            net_cur.line.at[line_id, "in_service"] = fechar
+            try:
+                pp.runpp(net_cur, calculate_voltage_angles=True, init="flat", numba=False)
+            except Exception:
+                actions.append(f"topology_correction_failed_line{line_id}")
+                break
+            if not fechar:  # o modelo nao mede ramo ausente
+                meas_cur = [mm for mm in meas_cur if not (mm.branch_kind == "line" and int(mm.element) == int(line_id))]
+            if classifier == "glrt":  # biblioteca e delta valem para uma topologia so
+                sens_lib = parameter_sensitivity_library(net_cur, meas_cur)
+                delta = branch_delta(net_cur)
+            actions.append(f"{'closed' if fechar else 'opened'}_line{line_id}")
     else:
         iteration = max_iter - 1
 

@@ -36,7 +36,7 @@ UKF, FASE com previsao explicita e fusao multi-rate permanecem no backlog.
 - Reutiliza `h(x)` e `H(x)` dos [modelos](docs/simulacao/modelos.md) AC/DC de `estimacao_estado`.
 - Consome series temporais de medicoes de [`geracao_dados`](../geracao_dados).
 - O caso de validacao atual esta em
-  [`14_BUS_IEEE_dynamic_AC.ipynb`](../../../notebooks/simulacao/14_BUS_IEEE_dynamic_AC.ipynb).
+  [`2026-07-17_14_BUS_IEEE_dynamic_AC.ipynb`](../../../notebooks/simulacao/2026-07-17_14_BUS_IEEE_dynamic_AC.ipynb).
 
 ## Regra de validacao para `Q`
 

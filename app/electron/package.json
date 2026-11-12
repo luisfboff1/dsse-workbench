@@ -1,7 +1,7 @@
 {
   "name": "dsse-workbench",
   "productName": "DSSE Workbench",
-  "version": "0.8.0",
+  "version": "0.12.0",
   "description": "DSSE Simulation Workbench — power flow, state estimation e bad data",
   "homepage": "https://github.com/luisfboff1/dsse-workbench",
   "author": "Luis Fernando Boff <luisfboff@gmail.com>",

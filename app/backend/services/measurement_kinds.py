@@ -20,7 +20,11 @@ from tese_dsse.estimacao_estado.sensor_calibration import (  # noqa: F401,E402
     MEASUREMENT_KIND_SPECS,
     MeasurementKind,
     MeasurementKindSpec,
+    audit_power_sigmas,
+    meter_full_scale,
     p_sigma,
+    relative_sigma,
+    typical_power_scale,
     v_sigma,
     va_sigma_deg,
 )

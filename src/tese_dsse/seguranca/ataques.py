@@ -11,7 +11,7 @@ outlier isolado que o LNR acha em uma iteracao. O *mesmo* bias aplicado a uma
 RTU comprometida corrompe um bloco de medicoes correlacionadas e produz uma
 assinatura espalhada, indistinguivel a olho nu de um erro de parametro -- que
 e exatamente a colisao de assinaturas que a tese ataca (ver
-`docs/planejamento/o2_assinatura.md`).
+`temas/assinatura_o2/o2_assinatura.md`).
 
 Cada ataque declara em que camada opera. A camada define quando ele e
 aplicado no pipeline, e nao ha ataque que atravesse duas camadas: se algo

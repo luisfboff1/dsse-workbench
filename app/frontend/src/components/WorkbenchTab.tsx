@@ -444,7 +444,7 @@ export function WorkbenchTab({ topology }: WorkbenchTabProps) {
             <div className="space-y-3">
               <div className="flex flex-wrap gap-3 text-xs mono">
                 <span>J_final = <strong>{badData.result.pipeline.J_final.toFixed(3)}</strong></span>
-                <span>threshold = <strong>{badData.result.pipeline.threshold.toFixed(3)}</strong></span>
+                <span>threshold = <strong>{badData.result.pipeline.threshold?.toFixed(3) ?? "—"}</strong></span>
                 <Badge variant={badData.result.pipeline.detected ? 'destructive' : 'default'} className="text-[10px]">
                   {badData.result.pipeline.detected ? 'Bad Data DETECTED' : 'Clean'}
                 </Badge>
@@ -544,7 +544,7 @@ export function WorkbenchTab({ topology }: WorkbenchTabProps) {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right mono text-xs">{r.pipeline.J_final.toFixed(3)}</TableCell>
-                          <TableCell className="text-right mono text-xs">{r.pipeline.threshold.toFixed(3)}</TableCell>
+                          <TableCell className="text-right mono text-xs">{r.pipeline.threshold?.toFixed(3) ?? "—"}</TableCell>
                           <TableCell className="text-right mono text-xs">{r.pipeline.flaggedIndices.join(',') || '—'}</TableCell>
                           <TableCell className="text-right mono text-xs">{r.pipeline.actions.join(',') || '—'}</TableCell>
                         </TableRow>

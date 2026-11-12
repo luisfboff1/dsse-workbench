@@ -16,8 +16,12 @@ import numpy as np
 
 from .measurement_kinds import (
     MEASUREMENT_KIND_SPECS,
+    audit_power_sigmas,
     default_measurements,
+    meter_full_scale,
     p_sigma,
+    relative_sigma,
+    typical_power_scale,
     v_sigma,
     va_sigma_deg,
 )
@@ -81,6 +85,7 @@ def configured_dc_rows(
     sigma_min: float,
     line_kind_by_pp: dict[int, str] | None = None,
     pp_line_to_frontend: dict[int, int] | None = None,
+    net: Any = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str], list[dict]]:
     """Filtra o modelo DC completo (toda barra + toda linha) pro que foi
     configurado em `topology.measurements`/`topology.line_measurements`, e
@@ -93,7 +98,7 @@ def configured_dc_rows(
     *verdadeiro* (DC sem perdas), são duas amostras ruidosas independentes da
     mesma grandeza física, não a mesma informação duplicada — é a convenção
     padrão de redundância usada em bad-data (Abur & Exposito) e é o que
-    `notebooks/simulacao/5_BUS_IEEE_bad_data_analytics.ipynb` usa (ver
+    `notebooks/simulacao/2026-06-18_5_BUS_IEEE_bad_data_analytics.ipynb` usa (ver
     `measurement_table` não filtrada de
     `dc_linear.build_linear_dc_model_from_rundcpp`, que já gera os dois lados
     em blocos: todo "from" primeiro, depois todo "to", mesma ordem de ramo —
@@ -115,6 +120,22 @@ def configured_dc_rows(
 
     rows: list[dict] = []
     meas_table = model.measurement_table
+    # piso por medidor (11/11/2026): fundo de escala = 2|P| do ponto medido,
+    # com minimo de 10% do |P| tipico da rede inteira -- nunca a base.
+    s_typ_dc = typical_power_scale(np.abs(np.asarray(z_true_full, dtype=float)))
+
+    # injecao em barra de passagem: fundo de escala = maior |P| dos ramos da barra
+    s_bus_dc: dict[int, float] = {}
+    zf = np.abs(np.asarray(z_true_full, dtype=float))
+    if "from_bus" in meas_table.columns:
+        for i, row in meas_table[meas_table["kind"].isin(["line", "trafo"])].iterrows():
+            b = row["from_bus"] if row.get("side") == "from" else row.get("to_bus")
+            if b is not None and b == b:
+                s_bus_dc[int(b)] = max(s_bus_dc.get(int(b), 0.0), float(zf[int(i)]))
+
+    def _sig(kind: str, z: float, s_local: float = 0.0) -> float:
+        return p_sigma(kind, z, noise_level, sigma_min, full_scale=meter_full_scale(z, 0.0, s_typ_dc, s_local))
+
     p_bus_rows = meas_table[meas_table["kind"] == "p_bus"]
     for i, row in p_bus_rows.iterrows():
         pp_bus = int(row["bus"])
@@ -128,7 +149,7 @@ def configured_dc_rows(
                 "H": model.H[idx, :],
                 "c": float(model.c[idx]),
                 "z_true": z_val,
-                "sigma": p_sigma(kind, z_val, noise_level, sigma_min),
+                "sigma": _sig(kind, z_val, s_bus_dc.get(pp_bus, 0.0)),
                 "label": f"P_inj_{pp_to_frontend[pp_bus]}",
                 "busId": pp_to_frontend[pp_bus],
                 "lineId": None,
@@ -151,10 +172,36 @@ def configured_dc_rows(
                     "H": model.H[idx, :],
                     "c": float(model.c[idx]),
                     "z_true": z_val,
-                    "sigma": p_sigma(kind, z_val, noise_level, sigma_min),
+                    "sigma": _sig(kind, z_val),
                     "label": row["label"],
                     "busId": None,
                     "lineId": pp_line_to_frontend.get(pp_line, pp_line),
+                    "meterKind": kind,
+                    "quantity": "p_branch",
+                }
+            )
+
+    # Ramo-trafo (tap fora do nominal, BUG-011): o medidor configurado e o id
+    # do frontend estao em net.trafo (build_net_from_frontend).
+    trafo_kind, trafo_fid = _trafo_meters(net)
+    if trafo_kind:
+        trafo_rows = meas_table[(meas_table["kind"] == "trafo") & (meas_table["side"].isin(["from", "to"]))]
+        for i, row in trafo_rows.iterrows():
+            t = int(row["element"])
+            kind = trafo_kind.get(t)
+            if kind is None:
+                continue
+            idx = int(i)
+            z_val = float(z_true_full[idx])
+            rows.append(
+                {
+                    "H": model.H[idx, :],
+                    "c": float(model.c[idx]),
+                    "z_true": z_val,
+                    "sigma": _sig(kind, z_val),
+                    "label": row["label"],
+                    "busId": None,
+                    "lineId": trafo_fid[t],
                     "meterKind": kind,
                     "quantity": "p_branch",
                 }
@@ -199,6 +246,11 @@ def configured_dc_rows(
         {"busId": r["busId"], "lineId": r["lineId"], "meterKind": r["meterKind"], "quantity": r["quantity"]}
         for r in rows
     ]
+    pw = [i for i, r in enumerate(rows) if r["quantity"] in ("p_inj", "p_branch")]
+    audit_power_sigmas(
+        z_true[pw], sigma[pw], [relative_sigma(rows[i]["meterKind"], noise_level) for i in pw],
+        [labels[i] for i in pw], context="app (DC): ",
+    )
     return H, c, z_true, sigma, labels, meta
 
 
@@ -212,8 +264,12 @@ def _ac_measurement_label(m: Any, net: Any = None) -> str:
     if m.kind == "q_inj":
         return f"Q_inj_{m.element}"
     if m.kind in ("p_branch", "q_branch") and net is not None:
-        fb = int(net.line.at[m.element, "from_bus"])
-        tb = int(net.line.at[m.element, "to_bus"])
+        if m.branch_kind == "trafo":
+            fb = int(net.trafo.at[m.element, "hv_bus"])
+            tb = int(net.trafo.at[m.element, "lv_bus"])
+        else:
+            fb = int(net.line.at[m.element, "from_bus"])
+            tb = int(net.line.at[m.element, "to_bus"])
         if m.side == "to":
             fb, tb = tb, fb
         prefix = "P" if m.kind == "p_branch" else "Q"
@@ -277,6 +333,15 @@ def build_configured_ac_measurements(
     base_mva = float(ppc["baseMVA"])
     S_inj = (V * np.conj(np.asarray(Ybus @ V).reshape(-1))) * base_mva
     bus_to_ppc = net._pd2ppc_lookups["bus"]
+    from tese_dsse.estimacao_estado.ac_measurements import _pair_magnitudes, bus_throughput, network_power_scale
+
+    # piso por medidor (11/11/2026): mesmo calculo do notebook
+    # (synthetic_full_measurements_from_results), nunca `base_mva`.
+    s_typ = network_power_scale(net)
+    s_bus = bus_throughput(net)
+
+    def _sig(kind: str, value: float, p: float, q: float, s_local: float = 0.0) -> float:
+        return p_sigma(kind, value, noise_level, sigma_min, full_scale=meter_full_scale(p, q, s_typ, s_local))
 
     measurements: list = []
     meta: list[dict] = []
@@ -300,8 +365,8 @@ def build_configured_ac_measurements(
         ppc_index = int(bus_to_ppc[pp_bus])
         p_value = float(np.real(S_inj[ppc_index]))
         q_value = float(np.imag(S_inj[ppc_index]))
-        add_bus("p_inj", p_value, p_sigma(kind, p_value, noise_level, sigma_min, sn_mva=base_mva), pp_bus, kind)
-        add_bus("q_inj", q_value, p_sigma(kind, q_value, noise_level, sigma_min, sn_mva=base_mva), pp_bus, kind)
+        add_bus("p_inj", p_value, _sig(kind, p_value, p_value, q_value, s_bus.get(pp_bus, 0.0)), pp_bus, kind)
+        add_bus("q_inj", q_value, _sig(kind, q_value, p_value, q_value, s_bus.get(pp_bus, 0.0)), pp_bus, kind)
 
     # Passo 3: va_bus (PMU, ângulo direto) — slack excluído: referência fixa
     # (0°), não faz parte do vetor de estado — um PMU ali daria uma linha de
@@ -326,7 +391,7 @@ def build_configured_ac_measurements(
                         kind="p_branch",
                         element=pp_line,
                         value=p_value,
-                        sigma=p_sigma(kind, p_value, noise_level, sigma_min, sn_mva=base_mva),
+                        sigma=_sig(kind, p_value, p_value, q_value),
                         side=side,
                         branch_kind="line",
                     )
@@ -344,7 +409,7 @@ def build_configured_ac_measurements(
                         kind="q_branch",
                         element=pp_line,
                         value=q_value,
-                        sigma=p_sigma(kind, q_value, noise_level, sigma_min, sn_mva=base_mva),
+                        sigma=_sig(kind, q_value, p_value, q_value),
                         side=side,
                         branch_kind="line",
                     )
@@ -358,7 +423,50 @@ def build_configured_ac_measurements(
                     }
                 )
 
+    # Ramo-trafo (BUG-011): lado "from" = AT, "to" = BT, a convencao do modelo
+    # AC (ac_measurements). Medidor e id do frontend vem de net.trafo.
+    trafo_kind, trafo_fid = _trafo_meters(net)
+    for t in sorted(trafo_kind):
+        kind = trafo_kind[t]
+        for side, lado in (("from", "hv"), ("to", "lv")):
+            p_t = float(net.res_trafo.at[t, f"p_{lado}_mw"])
+            q_t = float(net.res_trafo.at[t, f"q_{lado}_mvar"])
+            for qty, col in (("p_branch", f"p_{lado}_mw"), ("q_branch", f"q_{lado}_mvar")):
+                value = float(net.res_trafo.at[t, col])
+                measurements.append(
+                    ACMeasurement(
+                        kind=qty,
+                        element=t,
+                        value=value,
+                        sigma=_sig(kind, value, p_t, q_t),
+                        side=side,
+                        branch_kind="trafo",
+                    )
+                )
+                meta.append({"busId": None, "lineId": trafo_fid[t], "meterKind": kind, "quantity": qty})
+
+    pq = [(m, mt) for m, mt in zip(measurements, meta) if m.kind in ("p_inj", "q_inj", "p_branch", "q_branch")]
+    audit_power_sigmas(
+        [m.value for m, _ in pq], [m.sigma for m, _ in pq],
+        [relative_sigma(mt["meterKind"], noise_level) for _, mt in pq],
+        [f"{m.kind}:{m.element}" for m, _ in pq],
+        magnitudes=_pair_magnitudes([m for m, _ in pq]), context="app (AC): ",
+    )
     return measurements, meta
+
+
+def _trafo_meters(net: Any) -> tuple[dict[int, str], dict[int, int]]:
+    """({pp_trafo: tipo de medidor}, {pp_trafo: id do frontend}) dos trafos em
+    servico com medidor, gravados por build_net_from_frontend em net.trafo
+    (colunas meter_kind e frontend_id). Vazio para rede sem trafo."""
+    if net is None or len(net.trafo) == 0 or "meter_kind" not in net.trafo.columns:
+        return {}, {}
+    kinds, fids = {}, {}
+    for t, row in net.trafo.iterrows():
+        if isinstance(row.meter_kind, str) and bool(row.in_service):
+            kinds[int(t)] = row.meter_kind
+            fids[int(t)] = int(row.frontend_id)
+    return kinds, fids
 
 
 def configured_ac_linearized_rows(
@@ -406,7 +514,7 @@ def configured_ac_linearized_rows(
     model = build_ac_ybus_model_from_pandapower(net, measurements)
     x_true = model.state_from_results(net.res_bus.vm_pu, net.res_bus.va_degree)
 
-    H = model.jacobian_finite_difference(x_true)
+    H = model.jacobian(x_true)
     z_at_true = model.h(x_true)
     c = z_at_true - H @ x_true
 

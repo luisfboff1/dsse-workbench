@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Bug, ChartLine, Lightning, Network, Wrench, Question, MagnifyingGlass, Cpu, Path, Monitor, CircleNotch } from '@phosphor-icons/react'
 import { BadDataAnalyticsTab } from '@/components/BadDataAnalyticsTab'
@@ -19,6 +19,9 @@ import { loadPandapowerCase } from '@/lib/api'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
 import { UpdateBanner } from '@/components/UpdateBanner'
+import { isTemporalView } from '@/lib/temporal'
+
+const TemporalWorkbench = lazy(() => import('@/components/TemporalWorkbench').then(module => ({ default: module.TemporalWorkbench })))
 
 const STORAGE_KEY = 'dsse-topology'
 
@@ -157,6 +160,8 @@ function App() {
 
   // ── Help / search palette state ──────────────────────────────────────────
   const [activeTab, setActiveTab] = useState('console')
+  const [studyMode, setStudyMode] = useState<'snapshot' | 'temporal'>('snapshot')
+  const [temporalOpened, setTemporalOpened] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [helpCategoryId, setHelpCategoryId] = useState<string | null>(null)
   const [helpTopicId, setHelpTopicId] = useState<string | null>(null)
@@ -200,7 +205,7 @@ function App() {
             <span className="hidden text-sm font-bold text-primary md:inline">DSSE Workbench</span>
           </div>
 
-          <TabsList className="h-auto gap-1 bg-transparent p-0">
+          <TabsList className="h-auto max-w-full flex-wrap justify-start gap-1 bg-transparent p-0">
             {NAV_ITEMS.map((item) => (
               <TabsTrigger
                 key={item.value}
@@ -214,6 +219,10 @@ function App() {
           </TabsList>
 
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center rounded-md border p-0.5" role="group" aria-label="Study mode">
+              <Button size="sm" className="h-7 text-xs" variant={studyMode === 'snapshot' ? 'secondary' : 'ghost'} aria-pressed={studyMode === 'snapshot'} onClick={() => setStudyMode('snapshot')}>Snapshot</Button>
+              <Button size="sm" className="h-7 text-xs" variant={studyMode === 'temporal' ? 'secondary' : 'ghost'} aria-pressed={studyMode === 'temporal'} onClick={() => { setTemporalOpened(true); setStudyMode('temporal') }}>Time series</Button>
+            </div>
             <Button
               variant="outline"
               size="sm"
@@ -261,13 +270,15 @@ function App() {
           </div>
         </header>
 
-        <div className="px-3 py-4 sm:px-6 sm:py-6">
+        {temporalOpened && <Suspense fallback={<div className="p-4 text-xs text-muted-foreground">Opening temporal workspace…</div>}><TemporalWorkbench topology={topology} onTopologyChange={setTopology} view={activeTab} visible={studyMode === 'temporal' && isTemporalView(activeTab)} /></Suspense>}
+        {studyMode === 'temporal' && !isTemporalView(activeTab) && activeTab !== 'help' && <div className="mx-4 mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">This tool runs individual snapshots. The temporal study remains available in Console, Topology, Power Flow, State Est. and Bad Data.</div>}
+        <div className={studyMode === 'temporal' && isTemporalView(activeTab) ? 'hidden' : 'px-3 py-4 sm:px-6 sm:py-6'}>
           <TabsContent value="console" className="mt-0">
-            <ConsoleTab topology={topology} restoring={!!pendingCase} />
+            {studyMode === 'snapshot' && <ConsoleTab topology={topology} restoring={!!pendingCase} />}
           </TabsContent>
 
           <TabsContent value="baddata" className="mt-0">
-            <BadDataAnalyticsTab topology={topology} />
+            {studyMode === 'snapshot' && <BadDataAnalyticsTab topology={topology} />}
           </TabsContent>
 
           <TabsContent value="agents" className="mt-0">
@@ -283,15 +294,15 @@ function App() {
           </TabsContent>
 
           <TabsContent value="powerflow" className="mt-0">
-            <PowerFlowTab topology={topology} />
+            {studyMode === 'snapshot' && <PowerFlowTab topology={topology} />}
           </TabsContent>
 
           <TabsContent value="estimation" className="mt-0">
-            <StateEstimationTab topology={topology} />
+            {studyMode === 'snapshot' && <StateEstimationTab topology={topology} />}
           </TabsContent>
 
           <TabsContent value="topology" className="mt-0">
-            <TopologyTab topology={topology} onTopologyChange={setTopology} />
+            {studyMode === 'snapshot' && <TopologyTab topology={topology} onTopologyChange={setTopology} />}
           </TabsContent>
 
           <TabsContent value="help" className="mt-0">
